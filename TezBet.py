@@ -44,10 +44,11 @@ class Match(sp.Contract):
     def place_bet(self, choice):
         # Before placing a bet, we make sure the match has not started
         sp.verify(self.data.status == "Not started", message = "Error: you cannot place a bet anymore")
-        sp.verify(sp.amount >= sp.tez(1), message = "Error: your bet must be higher or equal to 1 XTZ")
+        #sp.verify(sp.amount >= sp.tez(1), message = "Error: your bet must be higher or equal to 1 XTZ")
         sp.if self.data.tx.contains(sp.sender):
             sp.failwith("Error: you have already placed a bet, please remove it before placing a new one")
         sp.else: 
+            #amount_in_mutez = sp.mul(sp.amount,1000000)
             self.data.betted_amount[choice] += sp.amount
             self.data.tx[sp.sender] = sp.record(amount = sp.amount, choice = choice)
             self.total_betted_amount = self.update_rating()
@@ -71,13 +72,15 @@ class Match(sp.Contract):
         self.data.total_betted_amount = self.data.betted_amount["team_a"] + self.data.betted_amount["team_b"] + self.data.betted_amount["tie"]
         sp.for key in self.data.betted_amount.keys():
             sp.if self.data.betted_amount[key] > sp.tez(0):
-                rating = sp.ediv(self.data.total_betted_amount, self.data.betted_amount[key])
+                offset = 1000000
+                #rating = sp.ediv(self.data.total_betted_amount, self.data.betted_amount[key])
+
+                rating = sp.ediv(sp.mul(self.data.total_betted_amount,offset), self.data.betted_amount[key])
                 self.data.rating[key] = rating.open_some()
             sp.else:
                 self.data.rating[key] = sp.pair(sp.nat(1), sp.tez(0))
 
-    # This entry point is here to infer the outcome thanks to the scores (fetched through the oracle)
-    # just in case we can't retrieve the proper match outcome
+    # This entry point is a sketch for the upcoming oracle contract -- here it only serves scenario purposes
     @sp.entry_point
     def infer_outcome(self):
         sp.verify_equal(sp.sender, self.data.contract_address, "Error: you are not allowed to update the match status")
@@ -88,12 +91,16 @@ class Match(sp.Contract):
             self.data.outcome = "team_b"
         sp.if self.data.score["team_a"] == self.data.score["team_b"]:
             self.data.outcome = "tie"
-        
+    
+    # We let the users retrieve their gains themselves so they pay for this smart contract execution
     @sp.entry_point
     def redeem_tez(self):
         sp.verify_equal(self.data.status, "Ended", "Error: you cannot redeem your gains before the match has ended")
         sp.verify_equal(self.data.tx[sp.sender].choice, self.data.outcome, "Error: you have lost the bet")
-        sp.send(sp.sender, sp.mul(self.data.tx[sp.sender].amount, sp.fst(self.data.rating[self.data.outcome])))
+        offset = 1000000
+        raw_amount_to_send = sp.mul(self.data.tx[sp.sender].amount, sp.fst(self.data.rating[self.data.outcome]))
+        amount_to_send = sp.ediv(raw_amount_to_send, offset).open_some()
+        sp.send(sp.sender, sp.fst(amount_to_send))
 
 @sp.add_test(name = "Test Match Contract")
 def test():
@@ -125,13 +132,13 @@ def test():
     scenario.verify(test_match.data.status != "Suspended")
     
     # Placing and removing bets tests
-    scenario += test_match.place_bet("team_a").run(sender = bob.address, amount = sp.tez(1000))
-    scenario += test_match.place_bet("team_a").run(sender = alice.address, amount = sp.tez(5000))
+    scenario += test_match.place_bet("team_a").run(sender = bob.address, amount = sp.mutez(7500))
+    scenario += test_match.place_bet("team_a").run(sender = alice.address, amount = sp.mutez(5000))
     scenario += test_match.remove_bet().run(sender = bob.address)
-    scenario.verify(test_match.data.betted_amount["team_a"] == sp.tez(5000))
-    scenario.verify(test_match.data.total_betted_amount == sp.tez(5000))
-    scenario += test_match.place_bet("team_b").run(sender = bob.address, amount = sp.tez(10000))
-    scenario += test_match.place_bet("tie").run(sender = garfield.address, amount = sp.tez(5000))
+    scenario.verify(test_match.data.betted_amount["team_a"] == sp.mutez(5000))
+    scenario.verify(test_match.data.total_betted_amount == sp.mutez(5000))
+    scenario += test_match.place_bet("team_b").run(sender = bob.address, amount = sp.mutez(23))
+    scenario += test_match.place_bet("tie").run(sender = garfield.address, amount = sp.mutez(784))
 
     # Defining outcome tests
     scenario += test_match.update_status("Ended").run(sender = contract.address)
