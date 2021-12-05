@@ -44,11 +44,10 @@ class Match(sp.Contract):
     def place_bet(self, choice):
         # Before placing a bet, we make sure the match has not started
         sp.verify(self.data.status == "Not started", message = "Error: you cannot place a bet anymore")
-        #sp.verify(sp.amount >= sp.tez(1), message = "Error: your bet must be higher or equal to 1 XTZ")
+        sp.verify(sp.amount > sp.mutez(0), message = "Error: your bet cannot be null")
         sp.if self.data.tx.contains(sp.sender):
             sp.failwith("Error: you have already placed a bet, please remove it before placing a new one")
         sp.else: 
-            #amount_in_mutez = sp.mul(sp.amount,1000000)
             self.data.betted_amount[choice] += sp.amount
             self.data.tx[sp.sender] = sp.record(amount = sp.amount, choice = choice)
             self.total_betted_amount = self.update_rating()
@@ -73,8 +72,6 @@ class Match(sp.Contract):
         sp.for key in self.data.betted_amount.keys():
             sp.if self.data.betted_amount[key] > sp.tez(0):
                 offset = 1000000
-                #rating = sp.ediv(self.data.total_betted_amount, self.data.betted_amount[key])
-
                 rating = sp.ediv(sp.mul(self.data.total_betted_amount,offset), self.data.betted_amount[key])
                 self.data.rating[key] = rating.open_some()
             sp.else:
@@ -127,6 +124,7 @@ def test():
 
     bob = sp.test_account("Bob")
     alice = sp.test_account("Alice")
+    p_a = sp.test_account("Pierre-Antoine")
     garfield = sp.test_account("Garfield")
     scenario += test_match.update_status("Suspended").run(valid = False, sender = bob.address)
     scenario.verify(test_match.data.status != "Suspended")
@@ -134,9 +132,9 @@ def test():
     # Placing and removing bets tests
     scenario += test_match.place_bet("team_a").run(sender = bob.address, amount = sp.mutez(7500))
     scenario += test_match.place_bet("team_a").run(sender = alice.address, amount = sp.mutez(5000))
+    scenario += test_match.place_bet("team_a").run(sender = p_a.address, amount = sp.mutez(10))
     scenario += test_match.remove_bet().run(sender = bob.address)
-    scenario.verify(test_match.data.betted_amount["team_a"] == sp.mutez(5000))
-    scenario.verify(test_match.data.total_betted_amount == sp.mutez(5000))
+    scenario.verify(test_match.data.betted_amount["team_a"] == sp.mutez(5010))
     scenario += test_match.place_bet("team_b").run(sender = bob.address, amount = sp.mutez(23))
     scenario += test_match.place_bet("tie").run(sender = garfield.address, amount = sp.mutez(784))
 
@@ -148,5 +146,3 @@ def test():
     # Sending XTZ tests
     scenario += test_match.redeem_tez().run(sender = alice.address)
     scenario += test_match.update_status("Started").run(sender = contract.address)
-
-
