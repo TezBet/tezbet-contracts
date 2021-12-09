@@ -1,142 +1,127 @@
 import smartpy as sp
 
-class Match(sp.Contract):
-    def __init__(self, teams):
-        #self.init_type()
+class SoccerBetFactory(sp.Contract):
+    def __init__(self, admin):
         self.init(
-            status = "Not started",
+            admin = admin,
+            games = sp.map(tkey = sp.TString),  
+        )
+    
+    @sp.entry_point
+    def new_game(self, params):
+        sp.verify_equal(sp.sender, self.data.admin, message = "You cannot initialize a new game")
+        sp.verify(~ self.data.games.contains(params.game_id))
+
+        self.data.games[params.game_id] = sp.record(
+            team_a = params.team_a,
+            team_b = params.team_b,
+            status = sp.int(0),
             outcome = "NA",
             total_betted_amount = sp.tez(0),
-            names = sp.map({
-                "team_a": teams.team_a,
-                "team_b": teams.team_b
-            }),
             betted_amount = sp.map({
-                teams.team_a: sp.tez(0),
-                teams.team_b: sp.tez(0),
+                "team_a": sp.tez(0),
+                "team_b": sp.tez(0),
                 "tie": sp.tez(0)
             }),
             rating = sp.map({
-                teams.team_a: sp.pair(sp.nat(1), sp.tez(0)),
-                teams.team_b: sp.pair(sp.nat(1), sp.tez(0)),
+                "team_a": sp.pair(sp.nat(1), sp.tez(0)),
+                "team_b": sp.pair(sp.nat(1), sp.tez(0)),
                 "tie": sp.pair(sp.nat(1), sp.tez(0))
             }),
-
-            tx = sp.map(l = {}, tkey = sp.TAddress, tvalue = sp.TRecord(amount = sp.TMutez, choice = sp.TString))
+            bet_amount_by_user = sp.map(
+                tkey = sp.TAddress, 
+                tvalue = sp.TRecord(team_a = sp.TMutez, team_b = sp.TMutez, tie = sp.TMutez)
+            ),
+            final_rating = sp.record(
+                team_a = sp.pair(sp.nat(1), sp.mutez(0)),
+                team_b = sp.pair(sp.nat(1), sp.mutez(0)),
+                tie = sp.pair(sp.nat(1), sp.mutez(0))
+            )
         )
 
-    # This function will be called by the contract after each oracle call
-    def update_score(self, team, score):
-        sp.verify_equal(self.data.status, "Playing", "Error: match must be playing to update the score")
-        self.data.score[team] = score
-
-    # This function will be called by the contract after each oracle call
-    def update_status(self, new_match_status):
-        sp.if new_match_status in ("Playing", "Not started", "Suspended", "Ended"):
-            self.data.status = new_match_status
-
     @sp.entry_point
-    def place_bet(self, choice):
-        # Before placing a bet, we make sure the match has not started
-        sp.verify(self.data.status == "Not started", message = "Error: you cannot place a bet anymore")
+    def add_bet(self, params):
+        sp.verify(self.data.games.contains(params.game_id))
+        game = self.data.games[params.game_id]
+
+        sp.verify(game.status == 0, message = "Error: you cannot place a bet anymore")
         sp.verify(sp.amount > sp.mutez(0), message = "Error: your bet cannot be null")
-        self.data.betted_amount[choice] += sp.amount
-        self.data.tx[sp.sender] = sp.record(amount = sp.amount, choice = choice)
-        self.total_betted_amount = self.update_rating()
+
+        sp.if ~game.bet_amount_by_user.contains(sp.sender):
+            game.bet_amount_by_user[sp.sender] = sp.record(
+                team_a = sp.tez(0),
+                team_b = sp.tez(0),
+                tie    = sp.tez(0),
+            )
+
+        sp.if params.choice == 0:
+            game.bet_amount_by_user[sp.sender].team_a += sp.amount
+        sp.if params.choice == 1:
+            game.bet_amount_by_user[sp.sender].team_b += sp.amount
+        sp.if params.choice == 2:
+            game.bet_amount_by_user[sp.sender].tie += sp.amount
 
     @sp.entry_point
-    def remove_bet(self):
-        # Before removing a bet, we make sure the match has not started
-        sp.verify(self.data.status == "Not started", message = "Error: you cannot remove your bet anymore")
-        sp.if self.data.tx.contains(sp.sender):
-            self.data.betted_amount[self.data.tx[sp.sender].choice] -= self.data.tx[sp.sender].amount
-            # Here we will have to compute the tx fees for the bet removal
-            fees = sp.mutez(0)
-            sp.send(sp.sender, self.data.tx[sp.sender].amount - fees)
-            del self.data.tx[sp.sender]
-            self.update_rating()
-        sp.else:
-            sp.failwith("Error: you do not have any placed bet to remove")
+    def remove_bet(self, params):
+        sp.verify(self.data.games.contains(params.game_id))
+        game = self.data.games[params.game_id]
 
-    @sp.sub_entry_point
-    def update_rating(self):
-        self.data.total_betted_amount = self.data.betted_amount[self.data.names["team_a"]] + self.data.betted_amount[self.data.names["team_b"]] + self.data.betted_amount["tie"]
-        sp.for key in self.data.betted_amount.keys():
-            sp.if self.data.betted_amount[key] > sp.tez(0):
-                offset = 1000000
-                rating = sp.ediv(sp.mul(self.data.total_betted_amount,offset), self.data.betted_amount[key])
-                self.data.rating[key] = rating.open_some()
-            sp.else:
-                self.data.rating[key] = sp.pair(sp.nat(1), sp.tez(0))
-    
-    # We let the users retrieve their gains themselves so they pay for this smart contract execution
-    @sp.entry_point
-    def redeem_tez(self):
+        sp.verify(game.status == 1, message = "Error: you cannot remove your bet anymore")
+        sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
 
-        # The two following lines are here for testing purposes while the oracle calls have not be set.
-        self.data.status = "Ended"
-        self.data.outcome = self.data.names["team_a"]
+        #game.betted_amount[self.data.tx[sp.sender].choice] -= self.data.tx[sp.sender].amount
+        # Here we will have to compute the tx fees for the bet removal
+        fees = sp.mutez(0)
+        #sp.send(sp.sender, game.bet_amount_by_user[sp.sender].amount - fees)
+        #del self.data.tx[sp.sender] 
+        sp.if params.choice == 0:
+            sp.verify(game.bet_amount_by_user[sp.sender].team_a > sp.tez(0))
+            game.bet_amount_by_user[sp.sender].team_a -= sp.amount
+        sp.if params.choice == 1:
+            sp.verify(game.bet_amount_by_user[sp.sender].team_b > sp.tez(0))
+            game.bet_amount_by_user[sp.sender].team_b -= sp.amount
+        sp.if params.choice == 2:
+            sp.verify(game.bet_amount_by_user[sp.sender].tie > sp.tez(0))
+            game.bet_amount_by_user[sp.sender].tie -= sp.amount       
+        
+        sp.send(sp.sender, game.bet_amount_by_user[sp.sender].team_a + game.bet_amount_by_user[sp.sender].team_b + game.bet_amount_by_user[sp.sender].tie)
 
-        sp.verify_equal(self.data.status, "Ended", "Error: you cannot redeem your gains before the match has ended")
-        sp.verify_equal(self.data.tx[sp.sender].choice, self.data.outcome, "Error: you have lost the bet")
-        offset = 1000000
-        raw_amount_to_send = sp.mul(self.data.tx[sp.sender].amount, sp.fst(self.data.rating[self.data.outcome]))
-        amount_to_send = sp.ediv(raw_amount_to_send, offset).open_some()
-        sp.send(sp.sender, sp.fst(amount_to_send))
 
 @sp.add_test(name = "Test Match Contract")
 def test():
     scenario = sp.test_scenario()
-
-    # This account is here to mimick the behaviour of our smart contract.
-    # A set of functions cannot be performed by anyone but the contract itself, updating the score for instance.
-    contract = sp.test_account("Contract")
-
-    test_match = Match(sp.record(team_a = "France", team_b = "Italie"))
-    scenario += test_match
-
-    bob = sp.test_account("Bob")
+    admin = sp.test_account("Admin")
     alice = sp.test_account("Alice")
-    p_a = sp.test_account("Pierre-Antoine")
-    garfield = sp.test_account("Garfield")
-    
-    # Placing and removing bets tests
-    scenario += test_match.place_bet("France").run(sender = bob.address, amount = sp.mutez(7500))
-    scenario += test_match.place_bet("France").run(sender = alice.address, amount = sp.mutez(5000))
-    scenario += test_match.place_bet("France").run(sender = p_a.address, amount = sp.mutez(10))
-    scenario += test_match.remove_bet().run(sender = bob.address)
-    scenario.verify(test_match.data.betted_amount["France"] == sp.mutez(5010))
-    scenario += test_match.place_bet("Italie").run(sender = bob.address, amount = sp.mutez(23))
-    scenario += test_match.place_bet("tie").run(sender = garfield.address, amount = sp.mutez(784))
+    bob = sp.test_account("Bob")
 
-    # Sending XTZ tests
-    scenario += test_match.redeem_tez().run(sender = alice.address)
+    factory = SoccerBetFactory(admin.address)
+    scenario += factory
 
-class Deployer(sp.Contract):
-    def __init__(self):
-        self.match = Match(sp.record(team_a = "Team A", team_b = "Team B"))
-        self.init(x = sp.none)
-        
-    @sp.entry_point
-    def deployContract(self, teams):
-        self.data.x = sp.some(sp.create_contract(
-        storage = sp.record(
-        status = "Not started", 
-        outcome = "NA", 
-        total_betted_amount = sp.tez(0), 
-        names = sp.map({"team_a": teams.team_a, "team_b": teams.team_b}),
-        betted_amount = sp.map({teams.team_a: sp.tez(0), teams.team_b: sp.tez(0), "tie": sp.tez(0)}),
-        rating = sp.map({teams.team_a: sp.pair(sp.nat(1), sp.tez(0)),teams.team_b: sp.pair(sp.nat(1), sp.tez(0)),"tie": sp.pair(sp.nat(1), sp.tez(0))})
-        tx = sp.map({l = {}, tkey = sp.TAddress, tvalue = sp.TRecord(amount = sp.TMutez, choice = sp.TString)})
-        ), 
-        contract = self.match))
-        self.data.x = sp.none
-    
-@sp.add_test(name = "Test")
+    game1 = "game1"
+    scenario += factory.new_game(sp.record(
+        game_id = game1,
+        team_a = "France",
+        team_b = "Angleterre"
+    )).run(sender = admin)
 
-def test():
-    
-    obj = Deployer()
-    scenario = sp.test_scenario()
-    scenario += obj
-    scenario += obj.deployContract(sp.record(team_a = "Team A", team_b = "Team B"))
+    game2 = "game2"
+    scenario += factory.new_game(sp.record(
+        game_id = game2,
+        team_a = "Nice",
+        team_b = "Marseille"
+    )).run(sender = admin)
+
+    scenario += factory.add_bet(sp.record(
+        game_id = game1,
+        choice = 0,
+    )).run(sender = alice.address, amount = sp.tez(100))
+
+    scenario += factory.add_bet(sp.record(
+        game_id = game2,
+        choice = 1,
+    )).run(sender = alice.address, amount = sp.tez(800))
+
+    scenario += factory.add_bet(sp.record(
+        game_id = game2,
+        choice = 2,
+    )).run(sender = bob.address, amount = sp.tez(800))
