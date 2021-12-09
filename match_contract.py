@@ -16,18 +16,6 @@ class SoccerBetFactory(sp.Contract):
             team_a = params.team_a,
             team_b = params.team_b,
             status = sp.int(0),
-            outcome = "NA",
-            total_betted_amount = sp.tez(0),
-            betted_amount = sp.map({
-                "team_a": sp.tez(0),
-                "team_b": sp.tez(0),
-                "tie": sp.tez(0)
-            }),
-            rating = sp.map({
-                "team_a": sp.pair(sp.nat(1), sp.tez(0)),
-                "team_b": sp.pair(sp.nat(1), sp.tez(0)),
-                "tie": sp.pair(sp.nat(1), sp.tez(0))
-            }),
             bet_amount_by_user = sp.map(
                 tkey = sp.TAddress, 
                 tvalue = sp.TRecord(team_a = sp.TMutez, team_b = sp.TMutez, tie = sp.TMutez)
@@ -63,29 +51,32 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.entry_point
     def remove_bet(self, params):
-        sp.verify(self.data.games.contains(params.game_id))
+        sp.verify(self.data.games.contains(params.game_id), message = "You do not have any bets to remove")
         game = self.data.games[params.game_id]
+        game.status = 1
 
         sp.verify(game.status == 1, message = "Error: you cannot remove your bet anymore")
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
 
+        bet_by_user = game.bet_amount_by_user[sp.sender]
         #game.betted_amount[self.data.tx[sp.sender].choice] -= self.data.tx[sp.sender].amount
         # Here we will have to compute the tx fees for the bet removal
         fees = sp.mutez(0)
-        #sp.send(sp.sender, game.bet_amount_by_user[sp.sender].amount - fees)
-        #del self.data.tx[sp.sender] 
         sp.if params.choice == 0:
-            sp.verify(game.bet_amount_by_user[sp.sender].team_a > sp.tez(0))
-            game.bet_amount_by_user[sp.sender].team_a -= sp.amount
+            sp.verify(bet_by_user.team_a > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
+            sp.send(sp.sender, bet_by_user.team_a - fees)
+            bet_by_user.team_a = sp.tez(0)
         sp.if params.choice == 1:
-            sp.verify(game.bet_amount_by_user[sp.sender].team_b > sp.tez(0))
-            game.bet_amount_by_user[sp.sender].team_b -= sp.amount
+            sp.verify(bet_by_user.team_b > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
+            sp.send(sp.sender, bet_by_user.team_b - fees)               
+            bet_by_user.team_b = sp.tez(0)
         sp.if params.choice == 2:
-            sp.verify(game.bet_amount_by_user[sp.sender].tie > sp.tez(0))
-            game.bet_amount_by_user[sp.sender].tie -= sp.amount       
-        
-        sp.send(sp.sender, game.bet_amount_by_user[sp.sender].team_a + game.bet_amount_by_user[sp.sender].team_b + game.bet_amount_by_user[sp.sender].tie)
+            sp.verify(bet_by_user.tie > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
+            sp.send(sp.sender, bet_by_user.tie - fees)    
+            bet_by_user.tie = sp.tez(0)   
 
+        sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
+            del game.bet_amount_by_user[sp.sender]
 
 @sp.add_test(name = "Test Match Contract")
 def test():
@@ -125,3 +116,13 @@ def test():
         game_id = game2,
         choice = 2,
     )).run(sender = bob.address, amount = sp.tez(800))
+
+    scenario += factory.remove_bet(sp.record(
+        game_id = game2,
+        choice = 2,
+    )).run(sender = bob.address)
+
+    scenario += factory.remove_bet(sp.record(
+        game_id = game2,
+        choice = 1,
+    )).run(sender = alice.address)
