@@ -24,7 +24,8 @@ class SoccerBetFactory(sp.Contract):
                 team_a = sp.pair(sp.nat(1), sp.mutez(0)),
                 team_b = sp.pair(sp.nat(1), sp.mutez(0)),
                 tie = sp.pair(sp.nat(1), sp.mutez(0))
-            )
+            ),
+            total = sp.tez(0)
         )
 
     @sp.entry_point
@@ -53,13 +54,11 @@ class SoccerBetFactory(sp.Contract):
     def remove_bet(self, params):
         sp.verify(self.data.games.contains(params.game_id), message = "You do not have any bets to remove")
         game = self.data.games[params.game_id]
-        game.status = 1
 
-        sp.verify(game.status == 1, message = "Error: you cannot remove your bet anymore")
+        sp.verify(game.status == 0, message = "Error: you cannot remove your bet anymore")
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
 
         bet_by_user = game.bet_amount_by_user[sp.sender]
-        #game.betted_amount[self.data.tx[sp.sender].choice] -= self.data.tx[sp.sender].amount
         # Here we will have to compute the tx fees for the bet removal
         fees = sp.mutez(0)
         sp.if params.choice == 0:
@@ -78,12 +77,79 @@ class SoccerBetFactory(sp.Contract):
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
 
+    @sp.entry_point
+    def redeem_tez(self, params):
+        game = self.data.games[params.game_id]
+        sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you did not place a bet on this match")
+        sp.verify_equal(game.status, sp.int(2), "Error: you cannot redeem your gains before the match has ended")
+
+        bet_by_user = game.bet_amount_by_user[sp.sender]
+        outcome = sp.local("outcome",sp.int(1))
+        offset = 1
+        raw_amount_to_send = sp.local("raw_amount_to_send", sp.tez(0))
+
+        sp.if (outcome.value == sp.int(0)) & (bet_by_user.team_a > sp.tez(0)):
+            raw_amount_to_send.value = sp.mul(bet_by_user.team_b, sp.fst(game.final_rating.team_b))
+            bet_by_user.team_b = sp.tez(0)
+            amount_to_send = sp.ediv(raw_amount_to_send.value, offset).open_some()
+            sp.send(sp.sender, sp.fst(amount_to_send))
+        
+        sp.if (outcome.value == sp.int(1)) & (bet_by_user.team_b > sp.tez(0)):
+            raw_amount_to_send.value = sp.mul(bet_by_user.team_b, sp.fst(game.final_rating.team_b))
+            bet_by_user.team_b = sp.tez(0)
+            amount_to_send = sp.ediv(raw_amount_to_send.value, offset).open_some()
+            sp.send(sp.sender, sp.fst(amount_to_send))
+        
+        sp.if (outcome.value == sp.int(2)) & (bet_by_user.tie > sp.tez(0)):
+            raw_amount_to_send.value = sp.mul(bet_by_user.tie, sp.fst(game.final_rating.tie))
+            amount_to_send = sp.ediv(raw_amount_to_send.value, offset).open_some()
+            sp.send(sp.sender, sp.fst(amount_to_send))
+            bet_by_user.tie = sp.tez(0)
+
+        sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
+            del game.bet_amount_by_user[sp.sender]
+
+    @sp.entry_point
+    def update_status(self, params):
+        sp.verify_equal(sp.sender, self.data.admin, message = "You cannot update the game status")
+        game = self.data.games[params.game_id]
+
+        sp.if game.status == sp.int(1):
+            game.status += 1
+        sp.if game.status == sp.int(0):
+            game.status += 1
+            game.set_ratings(game)
+
+    @sp.private_lambda(with_operations=False, with_storage="read-write", wrap_call=True)
+    def set_ratings(self, game):
+        sp.verify_equal(game.status, sp.int(1), "Error: ratings cannot be set")
+        bet_amount_on_team_a = sp.local("bet_amount_on_team_a", sp.tez(0))
+        bet_amount_on_team_b = sp.local("bet_amount_on_team_b", sp.tez(0))
+        bet_amount_on_tie = sp.local("bet_amount_on_tie", sp.tez(0))
+        total_bet_amount = sp.local("total_bet_amount", sp.tez(0))
+        offset = 1000000
+
+        sp.for key in game.bet_amount_by_user.keys():
+            bet_amount_on_team_a.value += game.bet_amount_by_user[key].team_a
+            bet_amount_on_team_b.value += game.bet_amount_by_user[key].team_b
+            bet_amount_on_tie.value += game.bet_amount_by_user[key].tie
+        
+        total_bet_amount.value = sp.mul(bet_amount_on_team_a.value + bet_amount_on_team_b.value + bet_amount_on_tie.value, offset)
+        game.total = total_bet_amount.value
+
+        game.final_rating = sp.record(
+            team_a = sp.ediv(total_bet_amount.value, bet_amount_on_team_a.value).open_some(),
+            team_b = sp.ediv(total_bet_amount.value, bet_amount_on_team_b.value).open_some(),
+            tie = sp.ediv(total_bet_amount.value, bet_amount_on_tie.value).open_some()
+        )
+
 @sp.add_test(name = "Test Match Contract")
 def test():
     scenario = sp.test_scenario()
     admin = sp.test_account("Admin")
     alice = sp.test_account("Alice")
     bob = sp.test_account("Bob")
+    garfield = sp.test_account("Gabriel")
 
     factory = SoccerBetFactory(admin.address)
     scenario += factory
@@ -114,15 +180,40 @@ def test():
 
     scenario += factory.add_bet(sp.record(
         game_id = game2,
-        choice = 2,
+        choice = 1,
     )).run(sender = bob.address, amount = sp.tez(800))
 
-    scenario += factory.remove_bet(sp.record(
+    scenario += factory.add_bet(sp.record(
         game_id = game2,
         choice = 2,
-    )).run(sender = bob.address)
+    )).run(sender = bob.address, amount = sp.tez(1600))
+
+    scenario += factory.add_bet(sp.record(
+        game_id = game2,
+        choice = 0,
+    )).run(sender = garfield.address, amount = sp.tez(3200))
 
     scenario += factory.remove_bet(sp.record(
         game_id = game2,
         choice = 1,
+    )).run(sender = bob.address)
+
+    scenario += factory.update_status(sp.record(
+        game_id = game2
+    )).run(sender = admin.address)
+
+    scenario += factory.update_status(sp.record(
+        game_id = game2
+    )).run(sender = admin.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id = game2,
+        choice = 1,
     )).run(sender = alice.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id = game2,
+        choice = 1,
+    )).run(sender = bob.address)
+
+
