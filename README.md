@@ -16,10 +16,17 @@ This an exhaustive list of the functionalities that we wanted to implement in Te
 
 ### Smart contract
 :heavy_check_mark: Creating a contract factory managing the matches
+
 :heavy_check_mark: Placing bets on different matches and potential outcomes
+
 :heavy_check_mark: Removing bets on different matches and potential outcomes
+
 :heavy_check_mark: Computing the odds aka the potential gains
+
 :heavy_check_mark: Updating the match status
+
 :heavy_check_mark: Redeeming the gains of a won bet
+
 :heavy_check_mark: Erasing a match from the database when all gains have been redeemed
+
 :x: Using Chainlink to fetch the games and their outcome
