@@ -9,7 +9,7 @@ class SoccerBetFactory(sp.Contract):
     
     @sp.entry_point
     def new_game(self, params):
-        sp.verify_equal(sp.sender, self.data.admin, message = "You cannot initialize a new game")
+        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot initialize a new game")
         sp.verify(~ self.data.games.contains(params.game_id))
 
         self.data.games[params.game_id] = sp.record(
@@ -20,12 +20,29 @@ class SoccerBetFactory(sp.Contract):
             bet_amount_on_team_a = sp.tez(0),
             bet_amount_on_team_b = sp.tez(0),
             bet_amount_on_tie    = sp.tez(0),
-
+            redeemed             = sp.int(0),
+            bets_by_choice       = sp.record(team_a = sp.int(0), team_b = sp.int(0), tie = sp.int(0)),
             bet_amount_by_user = sp.map(
                 tkey = sp.TAddress, 
                 tvalue = sp.TRecord(team_a = sp.TMutez, team_b = sp.TMutez, tie = sp.TMutez)
             )
         )
+
+    @sp.entry_point
+    def delete_game(self, params):
+        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot delete this game")
+        game = self.data.games[params.game_id]
+        sp.verify_equal(game.status, 2, message = "Error: games cannot be deleted before their end")
+        outcome = sp.local("outcome", sp.int(1))
+
+        sp.if (outcome.value == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
+            del self.data.games[params.game_id]
+
+        sp.if (outcome.value == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
+            del self.data.games[params.game_id]
+
+        sp.if (outcome.value == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
+            del self.data.games[params.game_id]
 
     @sp.entry_point
     def add_bet(self, params):
@@ -44,18 +61,22 @@ class SoccerBetFactory(sp.Contract):
         sp.if params.choice == 0:
             game.bet_amount_by_user[sp.sender].team_a += sp.amount
             game.bet_amount_on_team_a += sp.amount
+            game.bets_by_choice.team_a += sp.int(1)
         sp.if params.choice == 1:
             game.bet_amount_by_user[sp.sender].team_b += sp.amount
             game.bet_amount_on_team_b += sp.amount
+            game.bets_by_choice.team_b += sp.int(1)
+
         sp.if params.choice == 2:
             game.bet_amount_by_user[sp.sender].tie += sp.amount
             game.bet_amount_on_tie += sp.amount
-        
+            game.bets_by_choice.tie += sp.int(1)
+
         game.total_bet_amount = game.bet_amount_on_team_a + game.bet_amount_on_team_b +game.bet_amount_on_tie 
 
     @sp.entry_point
     def remove_bet(self, params):
-        sp.verify(self.data.games.contains(params.game_id), message = "You do not have any bets to remove")
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: you do not have any bets to remove")
         game = self.data.games[params.game_id]
         sp.verify(game.status == 0, message = "Error: you cannot remove your bet anymore")
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
@@ -66,18 +87,21 @@ class SoccerBetFactory(sp.Contract):
             sp.verify(bet_by_user.team_a > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
             sp.send(sp.sender, bet_by_user.team_a - fees)
             game.bet_amount_on_team_a -= bet_by_user.team_a
+            game.bets_by_choice.team_a -= sp.int(1)
             bet_by_user.team_a = sp.tez(0)
 
         sp.if params.choice == 1:
             sp.verify(bet_by_user.team_b > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
             sp.send(sp.sender, bet_by_user.team_b - fees)     
-            game.bet_amount_on_team_b -= bet_by_user.team_b         
+            game.bet_amount_on_team_b -= bet_by_user.team_b  
+            game.bets_by_choice.team_b -= sp.int(1)       
             bet_by_user.team_b = sp.tez(0)
 
         sp.if params.choice == 2:
             sp.verify(bet_by_user.tie > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
             sp.send(sp.sender, bet_by_user.tie - fees)
-            game.bet_amount_on_tie -= bet_by_user.tie    
+            game.bet_amount_on_tie -= bet_by_user.tie 
+            game.bets_by_choice.tie -= sp.int(1)   
             bet_by_user.tie = sp.tez(0)   
 
         game.total_bet_amount = game.bet_amount_on_team_a + game.bet_amount_on_team_b + game.bet_amount_on_tie 
@@ -87,9 +111,8 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.entry_point
     def next_status(self, params):
-        sp.verify_equal(sp.sender, self.data.admin, message = "You cannot update the game status")
+        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
         game = self.data.games[params.game_id]
-
         sp.if game.status == sp.int(1):
             game.status += 1
         sp.if game.status == sp.int(0):
@@ -114,17 +137,18 @@ class SoccerBetFactory(sp.Contract):
             amount_to_send.value = sp.split_tokens(bet_by_user.team_a, total_bet_amount_as_nat, bet_amount_on_team_a_as_nat)
             bet_by_user.team_a = sp.tez(0)
             sp.send(sp.sender, amount_to_send.value)
-
+            game.redeemed += 1
         sp.if (outcome.value == sp.int(1)) & (bet_by_user.team_b > sp.tez(0)):
             amount_to_send.value = sp.split_tokens(bet_by_user.team_b, total_bet_amount_as_nat, bet_amount_on_team_b_as_nat)
             bet_by_user.team_b = sp.tez(0)
             sp.send(sp.sender, amount_to_send.value)
-
+            game.redeemed += 1            
         sp.if (outcome.value == sp.int(2)) & (bet_by_user.tie > sp.tez(0)):
             amount_to_send.value = sp.split_tokens(bet_by_user.tie, total_bet_amount_as_nat, bet_amount_on_tie_as_nat)
             bet_by_user.tie = sp.tez(0)
             sp.send(sp.sender, amount_to_send.value)
-            
+            game.redeemed += 1
+
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
 
@@ -258,7 +282,13 @@ def test():
         game_id = game2
     )).run(sender = mathis.address)
 
-    # These scenarii are supposed to fail
+    # These scenarios are supposed to fail
     scenario += factory.redeem_tez(sp.record(
         game_id = game2
     )).run(sender = pierre_antoine.address, valid=False)  
+
+    scenario.h1("Testing the game deletion")
+
+    scenario += factory.delete_game(sp.record(
+        game_id = game2
+    )).run(sender = admin.address, valid=True)  
