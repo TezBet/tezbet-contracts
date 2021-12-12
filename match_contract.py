@@ -99,7 +99,7 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.if game.status == sp.int(1):
             game.status += 1
-            self.data.games[params.game_id].outcome = 1
+            game.outcome = 1
         sp.if game.status == sp.int(0):
             game.status += 1
 
@@ -125,10 +125,10 @@ class SoccerBetFactory(sp.Contract):
             bet_by_user.tie = sp.tez(0)
 
         sp.send(sp.sender, amount_to_send.value)
-        self.data.games[params.game_id].redeemed += 1  
+        game.redeemed += 1  
 
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
-            del self.data.games[params.game_id].bet_amount_by_user[sp.sender]
+            del game.bet_amount_by_user[sp.sender]
 
         sp.if self.data.games.contains(params.game_id):
             sp.if (game.outcome == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
