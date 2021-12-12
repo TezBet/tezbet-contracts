@@ -29,6 +29,7 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.entry_point
     def add_bet(self, params):
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: you must prompt a value comprised in {0;1;2}")
         sp.verify(self.data.games.contains(params.game_id))
         game = self.data.games[params.game_id]
 
@@ -59,6 +60,7 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.entry_point
     def remove_bet(self, params):
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: you must prompt a value comprised in {0;1;2}")
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
         game = self.data.games[params.game_id]
         sp.verify_equal(game.status, 0, message = "Error: you cannot remove your bet anymore")
@@ -101,9 +103,16 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.if game.status == sp.int(1):
             game.status += 1
-            game.outcome = 1
         sp.if game.status == sp.int(0):
             game.status += 1
+
+    @sp.entry_point
+    def set_outcome(self, params):
+        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
+        game = self.data.games[params.game_id]
+        sp.verify_equal(game.status, 1, "Error: the game outcome cannot be updated")
+        game.outcome = params.choice
 
     @sp.entry_point
     def redeem_tez(self, params):
@@ -132,15 +141,14 @@ class SoccerBetFactory(sp.Contract):
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
 
-        sp.if self.data.games.contains(params.game_id):
-            sp.if (game.outcome == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
-                del self.data.games[params.game_id]
-        sp.if self.data.games.contains(params.game_id):
+        sp.if (game.outcome == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
+            del self.data.games[params.game_id]
+        sp.else:
             sp.if (game.outcome == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
                 del self.data.games[params.game_id]
-        sp.if self.data.games.contains(params.game_id):
-            sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
-                del self.data.games[params.game_id]
+            sp.else:
+                sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
+                    del self.data.games[params.game_id]
 
 @sp.add_test(name = "Test Match Contract")
 def test():
@@ -158,7 +166,7 @@ def test():
 
     factory = SoccerBetFactory(admin.address)
     scenario += factory
-    scenario.h1("Testing the games initialization")
+    scenario.h1("Testing game initialization")
     game1 = "game1"
     scenario += factory.new_game(sp.record(
         game_id = game1,
@@ -173,7 +181,7 @@ def test():
         team_b = "Marseille"
     )).run(sender = admin)
 
-    scenario.h1("Testing the bet placing")
+    scenario.h1("Testing bet placing")
 
     scenario += factory.add_bet(sp.record(
         game_id = game1,
@@ -225,17 +233,22 @@ def test():
         choice = 0,
     )).run(sender = gabriel.address, amount = sp.tez(10000))
 
-    scenario.h1("Testing the bet removal")
+    scenario.h1("Testing bet removal")
 
     scenario += factory.remove_bet(sp.record(
         game_id = game2,
         choice = 1,
     )).run(sender = bob.address)
 
-    scenario.h1("Testing the states")
+    scenario.h1("Testing states")
 
     scenario += factory.next_status(sp.record(
         game_id = game1
+    )).run(sender = admin.address)
+
+    scenario += factory.set_outcome(sp.record(
+        game_id = game1,
+        choice = 1,
     )).run(sender = admin.address)
 
     scenario += factory.next_status(sp.record(
@@ -246,11 +259,16 @@ def test():
         game_id = game2
     )).run(sender = admin.address)
 
+    scenario += factory.set_outcome(sp.record(
+        game_id = game2,
+        choice = 1,
+    )).run(sender = admin.address)
+
     scenario += factory.next_status(sp.record(
         game_id = game2
     )).run(sender = admin.address)
 
-    scenario.h1("Testing the gains redemption")
+    scenario.h1("Testing gain redemption")
 
     # These scenarios are supposed to fail
     scenario += factory.redeem_tez(sp.record(
@@ -276,4 +294,3 @@ def test():
     scenario += factory.redeem_tez(sp.record(
         game_id = game2
     )).run(sender = mathis.address) 
-
