@@ -41,8 +41,8 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.private_lambda(with_storage="read-write", with_operations=False, wrap_call=True)
     def add_bet(self, params):
-        sp.verify(self.data.games.contains(game_id))
-        game = self.data.games[game_id]
+        sp.verify(self.data.games.contains(params.game_id))
+        game = self.data.games[params.game_id]
         sp.verify_equal(game.status, 0, message = "Error: you cannot place a bet anymore")
         sp.verify(sp.amount >= sp.mutez(100000), message = "Error: your bet must be equal or higher than 0.1 XTZ")
 
@@ -82,8 +82,8 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.private_lambda(with_storage="read-write", with_operations=True, wrap_call=True)
     def remove_bet(self, params):
-        sp.verify(self.data.games.contains(game_id), message = "Error: this match does not exist")
-        game = self.data.games[game_id]
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
+        game = self.data.games[params.game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
         sp.verify_equal(game.status, 0, message = "Error: you cannot remove your bet anymore")
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
@@ -285,3 +285,4 @@ def test():
     scenario += factory.redeem_tez(sp.record(
         game_id = game2
     )).run(sender = mathis.address) 
+
