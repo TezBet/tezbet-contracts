@@ -28,11 +28,21 @@ class SoccerBetFactory(sp.Contract):
         )
 
     @sp.entry_point
-    def add_bet(self, params):
-        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: you must prompt a value comprised in {0;1;2}")
-        sp.verify(self.data.games.contains(params.game_id))
-        game = self.data.games[params.game_id]
+    def bet_on_team_a(self, game_id):
+        self.add_bet(sp.record(game_id = game_id, choice = sp.int(0)))
 
+    @sp.entry_point
+    def bet_on_team_b(self, game_id):
+        self.add_bet(sp.record(game_id = game_id, choice = sp.int(1)))
+
+    @sp.entry_point
+    def bet_on_tie(self, game_id):
+        self.add_bet(sp.record(game_id = game_id, choice = sp.int(2)))           
+
+    @sp.private_lambda(with_storage="read-write", with_operations=False, wrap_call=True)
+    def add_bet(self, params):
+        sp.verify(self.data.games.contains(game_id))
+        game = self.data.games[game_id]
         sp.verify_equal(game.status, 0, message = "Error: you cannot place a bet anymore")
         sp.verify(sp.amount >= sp.mutez(100000), message = "Error: your bet must be equal or higher than 0.1 XTZ")
 
@@ -59,12 +69,23 @@ class SoccerBetFactory(sp.Contract):
         game.total_bet_amount = game.bet_amount_on.team_a + game.bet_amount_on.team_b + game.bet_amount_on.tie 
 
     @sp.entry_point
+    def unbet_on_team_a(self, game_id):
+        self.remove_bet(sp.record(game_id = game_id, choice = sp.int(0)))  
+
+    @sp.entry_point
+    def unbet_on_team_b(self, game_id):
+        self.remove_bet(sp.record(game_id = game_id, choice = sp.int(1))) 
+
+    @sp.entry_point
+    def unbet_on_tie(self, game_id):
+        self.remove_bet(sp.record(game_id = game_id, choice = sp.int(2)))          
+
+    @sp.private_lambda(with_storage="read-write", with_operations=True, wrap_call=True)
     def remove_bet(self, params):
-        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: you must prompt a value comprised in {0;1;2}")
-        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
-        game = self.data.games[params.game_id]
-        sp.verify_equal(game.status, 0, message = "Error: you cannot remove your bet anymore")
+        sp.verify(self.data.games.contains(game_id), message = "Error: this match does not exist")
+        game = self.data.games[game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
+        sp.verify_equal(game.status, 0, message = "Error: you cannot remove your bet anymore")
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
 
         bet_by_user = game.bet_amount_by_user[sp.sender]
@@ -95,25 +116,6 @@ class SoccerBetFactory(sp.Contract):
 
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
-
-    @sp.entry_point
-    def next_status(self, params):
-        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
-        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
-        game = self.data.games[params.game_id]
-        sp.if game.status == sp.int(1):
-            game.status += 1
-        sp.if game.status == sp.int(0):
-            game.status += 1
-
-    @sp.entry_point
-    def set_outcome(self, params):
-        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: you must prompt a value comprised in {0;1;2}")
-        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
-        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
-        game = self.data.games[params.game_id]
-        sp.verify_equal(game.status, 1, "Error: the game outcome cannot be updated")
-        game.outcome = params.choice
 
     @sp.entry_point
     def redeem_tez(self, params):
@@ -151,6 +153,27 @@ class SoccerBetFactory(sp.Contract):
                 sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
                     del self.data.games[params.game_id]
 
+    # Below entry points mimick the future oracle behaviour and are not meant to stay
+    @sp.entry_point
+    def next_status(self, params):
+        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
+        game = self.data.games[params.game_id]
+        sp.if game.status == sp.int(1):
+            game.status += 1
+        sp.if game.status == sp.int(0):
+            game.status += 1
+    
+    @sp.entry_point
+    def set_outcome(self, params):
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: entered value must be comprised within {0;1;2}")
+        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
+        game = self.data.games[params.game_id]
+        sp.verify_equal(game.status, 1, "Error: the game outcome cannot be updated")
+        game.outcome = params.choice
+    # Above entry points mimick the future oracle behaviour and are not meant to stay
+
 @sp.add_test(name = "Test Match Contract")
 def test():
     scenario = sp.test_scenario()
@@ -184,62 +207,29 @@ def test():
 
     scenario.h1("Testing bet placing")
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game1,
-        choice = 0,
-    )).run(sender = alice.address, amount = sp.tez(100))
+    scenario += factory.bet_on_team_a(game1).run(sender = alice.address, amount = sp.tez(100))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game1,
-        choice = 1,
-    )).run(sender = mathis.address, amount = sp.tez(1000))
+    scenario += factory.bet_on_team_b(game1).run(sender = mathis.address, amount = sp.tez(1000))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game2,
-        choice = 1,
-    )).run(sender = mathis.address, amount = sp.tez(7500))
+    scenario += factory.bet_on_team_b(game2).run(sender = mathis.address, amount = sp.tez(7500))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game2,
-        choice = 2,
-    )).run(sender = enguerrand.address, amount = sp.tez(500))
+    scenario += factory.bet_on_team_b(game2).run(sender = enguerrand.address, amount = sp.tez(500))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game1,
-        choice = 0,
-    )).run(sender = pierre_antoine.address, amount = sp.tez(2000))
+    scenario += factory.bet_on_team_a(game1).run(sender = pierre_antoine.address, amount = sp.tez(2000))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game1,
-        choice = 1,
-    )).run(sender = victor.address, amount = sp.tez(5000))
+    scenario += factory.bet_on_team_b(game1).run(sender = victor.address, amount = sp.tez(5000))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game2,
-        choice = 1,
-    )).run(sender = alice.address, amount = sp.tez(1000))
+    scenario += factory.bet_on_team_b(game2).run(sender = alice.address, amount = sp.tez(1000))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game2,
-        choice = 1,
-    )).run(sender = bob.address, amount = sp.tez(1000))
+    scenario += factory.bet_on_team_b(game2).run(sender = bob.address, amount = sp.tez(1000))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game2,
-        choice = 2,
-    )).run(sender = bob.address, amount = sp.tez(2000))
+    scenario += factory.bet_on_tie(game2).run(sender = bob.address, amount = sp.tez(2000))
 
-    scenario += factory.add_bet(sp.record(
-        game_id = game2,
-        choice = 0,
-    )).run(sender = gabriel.address, amount = sp.tez(10000))
+    scenario += factory.bet_on_team_a(game2).run(sender = gabriel.address, amount = sp.tez(10000))
 
     scenario.h1("Testing bet removal")
 
-    scenario += factory.remove_bet(sp.record(
-        game_id = game2,
-        choice = 1,
-    )).run(sender = bob.address)
+    scenario += factory.unbet_on_team_b(game2).run(sender = bob.address)
 
     scenario.h1("Testing states")
 
