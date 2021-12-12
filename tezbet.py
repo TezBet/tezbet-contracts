@@ -1,154 +1,274 @@
-
-
 import smartpy as sp
 
 
-class Bets(sp.Contract):
-    # this class contains information needed for bets
-
-    def __init__(self, id, name, team_A, team_B,
-                 sum_bet_on_A, sum_bet_on_B, sum_bet_on_tie, total_sum, precision):
-
+class SoccerBetFactory(sp.Contract):
+    def __init__(self, admin):
         self.init(
+            admin=admin,
+            games=sp.map(tkey=sp.TString),
 
-            match_id=id,
-            name=name,
-            team_A=team_A,
-            team_B=team_B,
-            rating_A=sp.pair(sp.nat(1), sp.mutez(0)),
-            rating_B=sp.pair(sp.nat(1), sp.mutez(0)),
-            rating_tie=sp.pair(sp.nat(1), sp.mutez(0)),
-            map_better_A=sp.map(l={}, tkey=sp.TAddress, tvalue=sp.TMutez),
-            map_better_B=sp.map(l={}, tkey=sp.TAddress, tvalue=sp.TMutez),
-            map_better_tie=sp.map(l={}, tkey=sp.TAddress, tvalue=sp.TMutez),
-            sum_bet_on_A=sum_bet_on_A,
-            sum_bet_on_B=sum_bet_on_B,
-            sum_bet_on_tie=sum_bet_on_tie,
-            total_sum=total_sum,
-            match_outcome=sp.nat(0),
-            map_better_outcome=sp.map(
-                l={}, tkey=sp.TAddress, tvalue=sp.TMutez),
-            precision=precision
+            leaderboard=sp.map(
+                tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TString))
+
 
         )
 
-    def has_bet(self):
-        return(self.data.map_better_A.contains(sp.sender) | self.data.map_better_B.contains(sp.sender) | self.data.map_better_tie.contains(sp.sender))
-
-    @sp.entry_point
-    def set_outcome(self, outcome):
-        self.data.match_outcome = outcome
-        sp.if self.data.match_outcome == 1:
-            self.data.map_better_outcome = self.data.map_better_A
-
-        sp.if self.data.match_outcome == 2:
-            self.data.map_better_outcome = self.data.map_better_B
-
-        sp.if self.data.match_outcome == 3:
-            self.data.map_better_outcome = self.data.map_better_tie
-
-    @sp.entry_point
-    def bet_on_A(self):
-        condition = self.has_bet()
-
-        sp.if ~condition:
-            self.data.map_better_A[sp.sender] = sp.amount
-            self.data.sum_bet_on_A += sp.amount
-
+    def leaderboard(self, params):
+        sp.verify(self.data.games.contains(params.game_id))  # le match existe
+        # type(val) = record
+        # type(val) = record
+        sp.if sp.len(self.data.leaderboard) == 0:
+            self.data.leaderboard[0] = params
         sp.else:
-            old_amount = self.data.map_better_A[sp.sender]
-            self.data.map_better_A[sp.sender] = old_amount + sp.amount
-            self.data.sum_bet_on_A += sp.amount
+
+            insertion_rank = sp.local("insertion_rank", sp.int(0))
+            sp.while (params.amount_tx < self.data.leaderboard[insertion_rank.value].amount_tx) & (insertion_rank.value < 10):
+                insertion_rank.value += 1
+
+            j = sp.local("j", sp.to_int(sp.len(self.data.leaderboard)))
+            sp.while (j.value > insertion_rank.value) & (j.value >= 0):
+                self.data.leaderboard[j.value] = self.data.leaderboard[j.value-1]
+                j.value -= 1
+            self.data.leaderboard[insertion_rank.value] = params
 
     @sp.entry_point
-    def bet_on_B(self):
-        condition = self.has_bet()
+    def new_game(self, params):
+        sp.verify_equal(sp.sender, self.data.admin,
+                        message="You cannot initialize a new game")
+        sp.verify(~ self.data.games.contains(params.game_id))
 
-        sp.if ~condition:
-            self.data.map_better_B[sp.sender] = sp.amount
-            self.data.sum_bet_on_B += sp.amount
+        self.data.games[params.game_id] = sp.record(
 
-        sp.else:
-            old_amount = self.data.map_better_B[sp.sender]
-            self.data.map_better_B[sp.sender] = old_amount + sp.amount
-            self.data.sum_bet_on_B += sp.amount
-
-    @sp.entry_point
-    def bet_on_tie(self):
-        condition = self.has_bet()
-
-        sp.if ~condition:
-            self.data.map_better_tie[sp.sender] = sp.amount
-            self.data.sum_bet_on_tie += sp.amount
-
-        sp.else:
-            old_amount = self.data.map_better_tie[sp.sender]
-            self.data.map_better_tie[sp.sender] = old_amount + sp.amount
-            self.data.sum_bet_on_tie += sp.amount
+            team_a=params.team_a,
+            team_b=params.team_b,
+            status=sp.int(0),
+            bet_amount_by_user=sp.map(
+                tkey=sp.TAddress,
+                tvalue=sp.TRecord(team_a=sp.TMutez,
+                                  team_b=sp.TMutez, tie=sp.TMutez)
+            ),
+            final_rating=sp.record(
+                team_a=sp.pair(sp.nat(1), sp.mutez(0)),
+                team_b=sp.pair(sp.nat(1), sp.mutez(0)),
+                tie=sp.pair(sp.nat(1), sp.mutez(0))
+            ),
+            total=sp.tez(0)
+        )
 
     @sp.entry_point
-    def ratings_and_total_sum(self):
-        self.data.total_sum = self.data.sum_bet_on_A + \
-            self.data.sum_bet_on_B + self.data.sum_bet_on_tie
-        total_sum_precision = sp.mul(self.data.total_sum, self.data.precision)
+    def add_bet(self, params):
+        sp.verify(self.data.games.contains(params.game_id))
+        game = self.data.games[params.game_id]
 
-        rating_A_ = sp.ediv(total_sum_precision, self.data.sum_bet_on_A)
-        rating_B_ = sp.ediv(total_sum_precision, self.data.sum_bet_on_B)
-        rating_tie_ = sp.ediv(total_sum_precision, self.data.sum_bet_on_tie)
-        self.data.rating_A = rating_A_.open_some()
-        self.data.rating_B = rating_B_.open_some()
-        self.data.rating_tie = rating_tie_.open_some()
+        sp.verify(game.status == 0,
+                  message="Error: you cannot place a bet anymore")
+        sp.verify(sp.amount > sp.mutez(0),
+                  message="Error: your bet cannot be null")
+
+        sp.if ~game.bet_amount_by_user.contains(sp.sender):
+            game.bet_amount_by_user[sp.sender] = sp.record(
+                team_a=sp.tez(0),
+                team_b=sp.tez(0),
+                tie=sp.tez(0),
+            )
+
+        sp.if params.choice == 0:
+            game.bet_amount_by_user[sp.sender].team_a += sp.amount
+            self.leaderboard(sp.record(better_address=sp.sender,
+                             amount_tx=sp.amount, game_id=params.game_id))
+
+        sp.if params.choice == 1:
+            game.bet_amount_by_user[sp.sender].team_b += sp.amount
+            self.leaderboard(sp.record(better_address=sp.sender,
+                             amount_tx=sp.amount, game_id=params.game_id))
+
+        sp.if params.choice == 2:
+            game.bet_amount_by_user[sp.sender].tie += sp.amount
+            self.leaderboard(sp.record(better_address=sp.sender,
+                             amount_tx=sp.amount, game_id=params.game_id))
 
     @sp.entry_point
-    def withdraw_earnings(self):
-        sp.verify(self.data.map_better_outcome.contains(
-            sp.sender), message="better not in list")
-        sp.if self.data.match_outcome == 1:
-            amount_to_send_raw = sp.mul(
-                self.data.map_better_outcome[sp.sender], sp.fst(self.data.rating_A))
+    def remove_bet(self, params):
+        sp.verify(self.data.games.contains(params.game_id),
+                  message="You do not have any bets to remove")
+        game = self.data.games[params.game_id]
+
+        sp.verify(game.status == 0,
+                  message="Error: you cannot remove your bet anymore")
+        sp.verify(game.bet_amount_by_user.contains(sp.sender),
+                  message="Error: you do not have any bets to remove")
+
+        bet_by_user = game.bet_amount_by_user[sp.sender]
+        # Here we will have to compute the tx fees for the bet removal
+        fees = sp.mutez(0)
+        sp.if params.choice == 0:
+            sp.verify(bet_by_user.team_a > sp.tez(
+                0), message="Error: you have not placed any bets on this outcome")
+            sp.send(sp.sender, bet_by_user.team_a - fees)
+            bet_by_user.team_a = sp.tez(0)
+        sp.if params.choice == 1:
+            sp.verify(bet_by_user.team_b > sp.tez(
+                0), message="Error: you have not placed any bets on this outcome")
+            sp.send(sp.sender, bet_by_user.team_b - fees)
+            bet_by_user.team_b = sp.tez(0)
+        sp.if params.choice == 2:
+            sp.verify(bet_by_user.tie > sp.tez(
+                0), message="Error: you have not placed any bets on this outcome")
+            sp.send(sp.sender, bet_by_user.tie - fees)
+            bet_by_user.tie = sp.tez(0)
+
+        sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
+            del game.bet_amount_by_user[sp.sender]
+
+    @sp.entry_point
+    def redeem_tez(self, params):
+        game = self.data.games[params.game_id]
+        sp.verify(game.bet_amount_by_user.contains(sp.sender),
+                  message="Error: you did not place a bet on this match")
+        sp.verify_equal(game.status, sp.int(
+            2), "Error: you cannot redeem your gains before the match has ended")
+
+        bet_by_user = game.bet_amount_by_user[sp.sender]
+        outcome = sp.local("outcome", sp.int(1))
+        offset = 1
+        raw_amount_to_send = sp.local("raw_amount_to_send", sp.tez(0))
+
+        sp.if (outcome.value == sp.int(0)) & (bet_by_user.team_a > sp.tez(0)):
+            raw_amount_to_send.value = sp.mul(
+                bet_by_user.team_b, sp.fst(game.final_rating.team_b))
+            bet_by_user.team_a = sp.tez(0)
             amount_to_send = sp.ediv(
-                amount_to_send_raw, self.data.precision).open_some()
-            sp.send(sp.sender, sp.fst(amount_to_send))
-        sp.if self.data.match_outcome == 2:
-            amount_to_send_raw = sp.mul(
-                self.data.map_better_outcome[sp.sender], sp.fst(self.data.rating_B))
-            amount_to_send = sp.ediv(
-                amount_to_send_raw, self.data.precision).open_some()
-            sp.send(sp.sender, sp.fst(amount_to_send))
-        sp.if self.data.match_outcome == 3:
-            amount_to_send_raw = sp.mul(
-                self.data.map_better_outcome[sp.sender], sp.fst(self.data.rating_tie))
-            amount_to_send = sp.ediv(
-                amount_to_send_raw, self.data.precision).open_some()
+                raw_amount_to_send.value, offset).open_some()
             sp.send(sp.sender, sp.fst(amount_to_send))
 
+        sp.if (outcome.value == sp.int(1)) & (bet_by_user.team_b > sp.tez(0)):
+            raw_amount_to_send.value = sp.mul(
+                bet_by_user.team_b, sp.fst(game.final_rating.team_b))
+            bet_by_user.team_b = sp.tez(0)
+            amount_to_send = sp.ediv(
+                raw_amount_to_send.value, offset).open_some()
+            sp.send(sp.sender, sp.fst(amount_to_send))
 
-@sp.add_test(name="Bets")
+        sp.if (outcome.value == sp.int(2)) & (bet_by_user.tie > sp.tez(0)):
+            raw_amount_to_send.value = sp.mul(
+                bet_by_user.tie, sp.fst(game.final_rating.tie))
+            bet_by_user.tie = sp.tez(0)
+            amount_to_send = sp.ediv(
+                raw_amount_to_send.value, offset).open_some()
+            sp.send(sp.sender, sp.fst(amount_to_send))
+
+        sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
+            del game.bet_amount_by_user[sp.sender]
+
+    @sp.entry_point
+    def update_status(self, params):
+        sp.verify_equal(sp.sender, self.data.admin,
+                        message="You cannot update the game status")
+        game = self.data.games[params.game_id]
+
+        sp.if game.status == sp.int(1):
+            game.status += 1
+        sp.if game.status == sp.int(0):
+            game.status += 1
+            game.set_ratings(game)
+
+    @sp.private_lambda(with_operations=False, with_storage="read-write", wrap_call=True)
+    def set_ratings(self, game):
+        sp.verify_equal(game.status, sp.int(1), "Error: ratings cannot be set")
+        bet_amount_on_team_a = sp.local("bet_amount_on_team_a", sp.tez(0))
+        bet_amount_on_team_b = sp.local("bet_amount_on_team_b", sp.tez(0))
+        bet_amount_on_tie = sp.local("bet_amount_on_tie", sp.tez(0))
+        total_bet_amount = sp.local("total_bet_amount", sp.tez(0))
+        offset = 1000000
+
+        sp.for key in game.bet_amount_by_user.keys():
+            bet_amount_on_team_a.value += game.bet_amount_by_user[key].team_a
+            bet_amount_on_team_b.value += game.bet_amount_by_user[key].team_b
+            bet_amount_on_tie.value += game.bet_amount_by_user[key].tie
+
+        total_bet_amount.value = sp.mul(
+            bet_amount_on_team_a.value + bet_amount_on_team_b.value + bet_amount_on_tie.value, offset)
+        game.total = total_bet_amount.value
+
+        game.final_rating = sp.record(
+            team_a=sp.ediv(total_bet_amount.value,
+                           bet_amount_on_team_a.value).open_some(),
+            team_b=sp.ediv(total_bet_amount.value,
+                           bet_amount_on_team_b.value).open_some(),
+            tie=sp.ediv(total_bet_amount.value,
+                        bet_amount_on_tie.value).open_some()
+        )
+
+
+@sp.add_test(name="Test Match Contract")
 def test():
-
+    scenario = sp.test_scenario()
+    admin = sp.test_account("Admin")
     alice = sp.test_account("Alice")
     bob = sp.test_account("Bob")
-    charlie = sp.test_account("Charlie")
-    rafael = sp.test_account("Rafael")
+    garfield = sp.test_account("Gabriel")
 
-    c1 = Bets(id=sp.string("srfc"), name=" Italie-France", team_A="Italie ", team_B="France",
-              sum_bet_on_A=sp.tez(0), sum_bet_on_B=sp.tez(0), sum_bet_on_tie=sp.tez(0), total_sum=sp.tez(0), precision=sp.nat(1000))
+    factory = SoccerBetFactory(admin.address)
+    scenario += factory
 
-    scenario = sp.test_scenario()
+    game1 = "game1"
+    scenario += factory.new_game(sp.record(
+        game_id=game1,
+        team_a="France",
+        team_b="Angleterre"
+    )).run(sender=admin)
 
-    scenario += c1
-    scenario.h1("adding first bet by alice")
-    scenario += c1.bet_on_A().run(sender=alice, amount=sp.tez(1000))
-    scenario += c1.bet_on_A().run(sender=alice, amount=sp.tez(400))
-    scenario.h2("adding 2nd bet by bob")
-    scenario += c1.bet_on_tie().run(sender=bob, amount=sp.tez(500))
-    scenario += c1.bet_on_B().run(sender=charlie, amount=sp.tez(600))
-    scenario += c1.bet_on_B().run(sender=charlie, amount=sp.tez(200))
-    scenario += c1.bet_on_B().run(sender=charlie, amount=sp.tez(400))
+    game2 = "game2"
+    scenario += factory.new_game(sp.record(
+        game_id=game2,
+        team_a="Nice",
+        team_b="Marseille"
+    )).run(sender=admin)
 
-    scenario += c1.bet_on_B().run(sender=rafael, amount=sp.tez(700))
-    scenario += c1.ratings_and_total_sum().run()
-    scenario += c1.set_outcome(sp.nat(2)).run()
-    scenario += c1.withdraw_earnings().run(sender=alice, exception="better not in list")
-    scenario += c1.withdraw_earnings().run(sender=rafael)
-    scenario += c1.withdraw_earnings().run(sender=charlie)
+    scenario += factory.add_bet(sp.record(
+        game_id=game1,
+        choice=0,
+    )).run(sender=alice.address, amount=sp.tez(100))
+
+    scenario += factory.add_bet(sp.record(
+        game_id=game2,
+        choice=1,
+    )).run(sender=alice.address, amount=sp.tez(800))
+
+    scenario += factory.add_bet(sp.record(
+        game_id=game2,
+        choice=1,
+    )).run(sender=bob.address, amount=sp.tez(800))
+
+    scenario += factory.add_bet(sp.record(
+        game_id=game2,
+        choice=2,
+    )).run(sender=bob.address, amount=sp.tez(1600))
+
+    scenario += factory.add_bet(sp.record(
+        game_id=game2,
+        choice=0,
+    )).run(sender=garfield.address, amount=sp.tez(3200))
+
+    scenario += factory.remove_bet(sp.record(
+        game_id=game2,
+        choice=1,
+    )).run(sender=bob.address)
+
+    scenario += factory.update_status(sp.record(
+        game_id=game2
+    )).run(sender=admin.address)
+
+    scenario += factory.update_status(sp.record(
+        game_id=game2
+    )).run(sender=admin.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game2,
+        choice=1,
+    )).run(sender=alice.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game2,
+        choice=1,
+    )).run(sender=bob.address)
