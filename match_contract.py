@@ -16,12 +16,11 @@ class SoccerBetFactory(sp.Contract):
             team_a = params.team_a,
             team_b = params.team_b,
             status = sp.int(0),
-            total_bet_amount     = sp.tez(0),
-            bet_amount_on_team_a = sp.tez(0),
-            bet_amount_on_team_b = sp.tez(0),
-            bet_amount_on_tie    = sp.tez(0),
-            redeemed             = sp.int(0),
-            bets_by_choice       = sp.record(team_a = sp.int(0), team_b = sp.int(0), tie = sp.int(0)),
+            outcome = sp.int(-1),
+            total_bet_amount = sp.tez(0),
+            bet_amount_on = sp.record(team_a = sp.tez(0),team_b = sp.tez(0), tie = sp.tez(0)),
+            redeemed = sp.int(0),
+            bets_by_choice = sp.record(team_a = sp.int(0), team_b = sp.int(0), tie = sp.int(0)),
             bet_amount_by_user = sp.map(
                 tkey = sp.TAddress, 
                 tvalue = sp.TRecord(team_a = sp.TMutez, team_b = sp.TMutez, tie = sp.TMutez)
@@ -29,27 +28,11 @@ class SoccerBetFactory(sp.Contract):
         )
 
     @sp.entry_point
-    def delete_game(self, params):
-        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot delete this game")
-        game = self.data.games[params.game_id]
-        sp.verify_equal(game.status, 2, message = "Error: games cannot be deleted before their end")
-        outcome = sp.local("outcome", sp.int(1))
-
-        sp.if (outcome.value == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
-            del self.data.games[params.game_id]
-
-        sp.if (outcome.value == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
-            del self.data.games[params.game_id]
-
-        sp.if (outcome.value == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
-            del self.data.games[params.game_id]
-
-    @sp.entry_point
     def add_bet(self, params):
         sp.verify(self.data.games.contains(params.game_id))
         game = self.data.games[params.game_id]
 
-        sp.verify(game.status == 0, message = "Error: you cannot place a bet anymore")
+        sp.verify_equal(game.status, 0, message = "Error: you cannot place a bet anymore")
         sp.verify(sp.amount >= sp.mutez(100000), message = "Error: your bet must be equal or higher than 0.1 XTZ")
 
         sp.if ~game.bet_amount_by_user.contains(sp.sender):
@@ -60,51 +43,51 @@ class SoccerBetFactory(sp.Contract):
 
         sp.if params.choice == 0:
             game.bet_amount_by_user[sp.sender].team_a += sp.amount
-            game.bet_amount_on_team_a += sp.amount
+            game.bet_amount_on.team_a += sp.amount
             game.bets_by_choice.team_a += sp.int(1)
         sp.if params.choice == 1:
             game.bet_amount_by_user[sp.sender].team_b += sp.amount
-            game.bet_amount_on_team_b += sp.amount
+            game.bet_amount_on.team_b += sp.amount
             game.bets_by_choice.team_b += sp.int(1)
 
         sp.if params.choice == 2:
             game.bet_amount_by_user[sp.sender].tie += sp.amount
-            game.bet_amount_on_tie += sp.amount
+            game.bet_amount_on.tie += sp.amount
             game.bets_by_choice.tie += sp.int(1)
 
-        game.total_bet_amount = game.bet_amount_on_team_a + game.bet_amount_on_team_b +game.bet_amount_on_tie 
+        game.total_bet_amount = game.bet_amount_on.team_a + game.bet_amount_on.team_b + game.bet_amount_on.tie 
 
     @sp.entry_point
     def remove_bet(self, params):
-        sp.verify(self.data.games.contains(params.game_id), message = "Error: you do not have any bets to remove")
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
         game = self.data.games[params.game_id]
-        sp.verify(game.status == 0, message = "Error: you cannot remove your bet anymore")
+        sp.verify_equal(game.status, 0, message = "Error: you cannot remove your bet anymore")
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
 
         bet_by_user = game.bet_amount_by_user[sp.sender]
         fees = sp.mutez(0)
         sp.if params.choice == 0:
             sp.verify(bet_by_user.team_a > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
+            game.bet_amount_on.team_a -= bet_by_user.team_a
             sp.send(sp.sender, bet_by_user.team_a - fees)
-            game.bet_amount_on_team_a -= bet_by_user.team_a
-            game.bets_by_choice.team_a -= sp.int(1)
+            self.data.games[params.game_id].bets_by_choice.team_a -= sp.int(1)
             bet_by_user.team_a = sp.tez(0)
 
         sp.if params.choice == 1:
             sp.verify(bet_by_user.team_b > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
+            game.bet_amount_on.team_b -= bet_by_user.team_b  
             sp.send(sp.sender, bet_by_user.team_b - fees)     
-            game.bet_amount_on_team_b -= bet_by_user.team_b  
-            game.bets_by_choice.team_b -= sp.int(1)       
+            self.data.games[params.game_id].bets_by_choice.team_b -= sp.int(1)       
             bet_by_user.team_b = sp.tez(0)
 
         sp.if params.choice == 2:
             sp.verify(bet_by_user.tie > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
+            game.bet_amount_on.tie -= bet_by_user.tie 
             sp.send(sp.sender, bet_by_user.tie - fees)
-            game.bet_amount_on_tie -= bet_by_user.tie 
-            game.bets_by_choice.tie -= sp.int(1)   
+            self.data.games[params.game_id].bets_by_choice.tie -= sp.int(1)   
             bet_by_user.tie = sp.tez(0)   
 
-        game.total_bet_amount = game.bet_amount_on_team_a + game.bet_amount_on_team_b + game.bet_amount_on_tie 
+        game.total_bet_amount = game.bet_amount_on.team_a + game.bet_amount_on.team_b + game.bet_amount_on.tie 
 
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
@@ -112,45 +95,50 @@ class SoccerBetFactory(sp.Contract):
     @sp.entry_point
     def next_status(self, params):
         sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
         game = self.data.games[params.game_id]
         sp.if game.status == sp.int(1):
             game.status += 1
+            self.data.games[params.game_id].outcome = 1
         sp.if game.status == sp.int(0):
             game.status += 1
 
     @sp.entry_point
     def redeem_tez(self, params):
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist anymore!")
         game = self.data.games[params.game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you did not place a bet on this match")
         sp.verify_equal(game.status, sp.int(2), "Error: you cannot redeem your gains before the match has ended")
-
         bet_by_user = game.bet_amount_by_user[sp.sender]
-        outcome = sp.local("outcome",sp.int(1))
+        sp.verify( ( ( game.outcome == sp.int(0) ) & ( bet_by_user.team_a > sp.tez(0) ) ) | ( ( game.outcome == sp.int(1) ) & ( bet_by_user.team_b > sp.tez(0) ) ) | ( ( game.outcome == sp.int(2) ) & ( bet_by_user.tie > sp.tez(0) ) ), message = "Error: you have lost your bet! :(")
 
-        bet_amount_on_team_a_as_nat  = sp.utils.mutez_to_nat(game.bet_amount_on_team_a)
-        bet_amount_on_team_b_as_nat  = sp.utils.mutez_to_nat(game.bet_amount_on_team_b)
-        bet_amount_on_tie_as_nat     = sp.utils.mutez_to_nat(game.bet_amount_on_tie)
-        total_bet_amount_as_nat      = sp.utils.mutez_to_nat(game.total_bet_amount)
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
 
-        sp.if (outcome.value == sp.int(0)) & (bet_by_user.team_a > sp.tez(0)):
-            amount_to_send.value = sp.split_tokens(bet_by_user.team_a, total_bet_amount_as_nat, bet_amount_on_team_a_as_nat)
+        sp.if game.outcome == sp.int(0):
+            amount_to_send.value = sp.split_tokens(bet_by_user.team_a, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_a))
             bet_by_user.team_a = sp.tez(0)
-            sp.send(sp.sender, amount_to_send.value)
-            game.redeemed += 1
-        sp.if (outcome.value == sp.int(1)) & (bet_by_user.team_b > sp.tez(0)):
-            amount_to_send.value = sp.split_tokens(bet_by_user.team_b, total_bet_amount_as_nat, bet_amount_on_team_b_as_nat)
-            bet_by_user.team_b = sp.tez(0)
-            sp.send(sp.sender, amount_to_send.value)
-            game.redeemed += 1            
-        sp.if (outcome.value == sp.int(2)) & (bet_by_user.tie > sp.tez(0)):
-            amount_to_send.value = sp.split_tokens(bet_by_user.tie, total_bet_amount_as_nat, bet_amount_on_tie_as_nat)
+        sp.if game.outcome == sp.int(1):
+            amount_to_send.value = sp.split_tokens(bet_by_user.team_b, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_b))
+            bet_by_user.team_b = sp.tez(0)         
+        sp.if game.outcome == sp.int(2):
+            amount_to_send.value = sp.split_tokens(bet_by_user.tie, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.tie))
             bet_by_user.tie = sp.tez(0)
-            sp.send(sp.sender, amount_to_send.value)
-            game.redeemed += 1
+
+        sp.send(sp.sender, amount_to_send.value)
+        self.data.games[params.game_id].redeemed += 1  
 
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
-            del game.bet_amount_by_user[sp.sender]
+            del self.data.games[params.game_id].bet_amount_by_user[sp.sender]
+
+        sp.if self.data.games.contains(params.game_id):
+            sp.if (game.outcome == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
+                del self.data.games[params.game_id]
+        sp.if self.data.games.contains(params.game_id):
+            sp.if (game.outcome == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
+                del self.data.games[params.game_id]
+        sp.if self.data.games.contains(params.game_id):
+            sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
+                del self.data.games[params.game_id]
 
 @sp.add_test(name = "Test Match Contract")
 def test():
@@ -168,7 +156,7 @@ def test():
 
     factory = SoccerBetFactory(admin.address)
     scenario += factory
-    scenario.h1("Testing the matches initialization")
+    scenario.h1("Testing the games initialization")
     game1 = "game1"
     scenario += factory.new_game(sp.record(
         game_id = game1,
@@ -260,15 +248,20 @@ def test():
         game_id = game2
     )).run(sender = admin.address)
 
-    scenario.h1("Testing the gains retrieval")
+    scenario.h1("Testing the gains redemption")
+
+    # These scenarios are supposed to fail
+    scenario += factory.redeem_tez(sp.record(
+        game_id = game1
+    )).run(sender = alice.address, valid = False)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id = game2
+    )).run(sender = pierre_antoine.address, valid=False) 
 
     scenario += factory.redeem_tez(sp.record(
         game_id = game1
     )).run(sender = mathis.address)
-   
-    scenario += factory.redeem_tez(sp.record(
-        game_id = game1
-    )).run(sender = alice.address)
 
     scenario += factory.redeem_tez(sp.record(
         game_id = game1
@@ -280,15 +273,4 @@ def test():
 
     scenario += factory.redeem_tez(sp.record(
         game_id = game2
-    )).run(sender = mathis.address)
-
-    # These scenarios are supposed to fail
-    scenario += factory.redeem_tez(sp.record(
-        game_id = game2
-    )).run(sender = pierre_antoine.address, valid=False)  
-
-    scenario.h1("Testing the game deletion")
-
-    scenario += factory.delete_game(sp.record(
-        game_id = game2
-    )).run(sender = admin.address, valid=True)  
+    )).run(sender = mathis.address) 
