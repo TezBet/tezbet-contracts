@@ -63,30 +63,32 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.verify_equal(game.status, 0, message = "Error: you cannot remove your bet anymore")
         sp.verify(game.bet_amount_by_user.contains(sp.sender), message = "Error: you do not have any bets to remove")
+        amount_to_send = sp.local("amount_to_send", sp.tez(0))
 
         bet_by_user = game.bet_amount_by_user[sp.sender]
         fees = sp.mutez(0)
         sp.if params.choice == 0:
             sp.verify(bet_by_user.team_a > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
             game.bet_amount_on.team_a -= bet_by_user.team_a
-            sp.send(sp.sender, bet_by_user.team_a - fees)
+            amount_to_send.value = bet_by_user.team_a
             self.data.games[params.game_id].bets_by_choice.team_a -= sp.int(1)
             bet_by_user.team_a = sp.tez(0)
 
         sp.if params.choice == 1:
             sp.verify(bet_by_user.team_b > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
             game.bet_amount_on.team_b -= bet_by_user.team_b  
-            sp.send(sp.sender, bet_by_user.team_b - fees)     
+            amount_to_send.value = bet_by_user.team_b
             self.data.games[params.game_id].bets_by_choice.team_b -= sp.int(1)       
             bet_by_user.team_b = sp.tez(0)
 
         sp.if params.choice == 2:
             sp.verify(bet_by_user.tie > sp.tez(0), message = "Error: you have not placed any bets on this outcome")
             game.bet_amount_on.tie -= bet_by_user.tie 
-            sp.send(sp.sender, bet_by_user.tie - fees)
+            amount_to_send.value = bet_by_user.tie
             self.data.games[params.game_id].bets_by_choice.tie -= sp.int(1)   
             bet_by_user.tie = sp.tez(0)   
-
+        
+        sp.send(sp.sender, amount_to_send.value - fees)
         game.total_bet_amount = game.bet_amount_on.team_a + game.bet_amount_on.team_b + game.bet_amount_on.tie 
 
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
@@ -274,3 +276,4 @@ def test():
     scenario += factory.redeem_tez(sp.record(
         game_id = game2
     )).run(sender = mathis.address) 
+
