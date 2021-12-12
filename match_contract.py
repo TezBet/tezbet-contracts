@@ -108,6 +108,7 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.entry_point
     def set_outcome(self, params):
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: you must prompt a value comprised in {0;1;2}")
         sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
         game = self.data.games[params.game_id]
