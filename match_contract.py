@@ -5,10 +5,10 @@ class SoccerBetFactory(sp.Contract):
     def __init__(self, admin):
         self.init(
             admin=admin,
-            games=sp.map(tkey=sp.TString)
+            games=sp.map(tkey=sp.TString),
             leaderboard=sp.map(
                 tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TString))
-
+            
         )
 
     def insert_in_leaderboard(self, record_to_insert):
@@ -33,6 +33,7 @@ class SoccerBetFactory(sp.Contract):
             team_a=params.team_a,
             team_b=params.team_b,
             status=sp.int(0),
+            match_timestamp = params.match_timestamp,
             outcome=sp.int(-1),
             total_bet_amount=sp.tez(0),
             bet_amount_on=sp.record(team_a=sp.tez(
@@ -44,6 +45,7 @@ class SoccerBetFactory(sp.Contract):
                 tkey=sp.TAddress,
                 tvalue=sp.TRecord(team_a=sp.TMutez,
                                   team_b=sp.TMutez, tie=sp.TMutez)
+            
             )
         )
 
@@ -61,10 +63,15 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.private_lambda(with_storage="read-write", with_operations=False, wrap_call=True)
     def add_bet(self, params):
+         
         sp.verify(self.data.games.contains(params.game_id))
         game = self.data.games[params.game_id]
-        sp.verify_equal(
-            game.status, 0, message="Error: you cannot place a bet anymore")
+
+        
+        sp.verify(sp.timestamp_from_utc_now() < game.match_timestamp,
+             message = "Error, you cannot place a bet anymore") 
+
+
         sp.verify(sp.amount >= sp.mutez(100000),
                   message="Error: your bet must be equal or higher than 0.1 XTZ")
 
@@ -110,9 +117,12 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you do not have any bets to remove")
-        sp.verify_equal(
-            game.status, 0, message="Error: you cannot remove your bet anymore")
+        sp.verify( sp.timestamp_from_utc_now() < game.match_timestamp, 
+                  message = "Error, you cannot remove a bet anymore")
+
+
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
+        
 
         bet_by_user = game.bet_amount_by_user[sp.sender]
         fees = sp.mutez(0)
@@ -154,8 +164,8 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you did not place a bet on this match")
-        sp.verify_equal(game.status, sp.int(
-            2), "Error: you cannot redeem your gains before the match has ended")
+        sp.verify(game.outcome != -1, 
+                  message = "Error, you cannot redeem your winnings yet")
         bet_by_user = game.bet_amount_by_user[sp.sender]
         sp.verify(((game.outcome == sp.int(0)) & (bet_by_user.team_a > sp.tez(0))) | ((game.outcome == sp.int(1)) & (bet_by_user.team_b > sp.tez(
             0))) | ((game.outcome == sp.int(2)) & (bet_by_user.tie > sp.tez(0))), message="Error: you have lost your bet! :(")
@@ -190,34 +200,24 @@ class SoccerBetFactory(sp.Contract):
             sp.if (game.outcome == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
                 del self.data.games[params.game_id]
             sp.else:
+
+
+
                 sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
                     del self.data.games[params.game_id]
 
     # Below entry points mimick the future oracle behaviour and are not meant to stay
-    @sp.entry_point
-    def next_status(self, params):
-        sp.verify_equal(sp.sender, self.data.admin,
-                        message="Error: you cannot update the game status")
-        sp.verify(self.data.games.contains(params.game_id),
-                  message="Error: this match does not exist")
-        game = self.data.games[params.game_id]
-        sp.verify((game.status == sp.int(0)) | (game.status == sp.int(1)), message = "Error: you cannot update the game status after it has ended")
-        sp.if game.status == sp.int(1):
-            game.status += 1
-        sp.if game.status == sp.int(0):
-            game.status += 1
-
+    
     @sp.entry_point
     def set_outcome(self, params):
-        sp.verify((params.choice == 0) | (params.choice == 1) | (
-            params.choice == 2), message="Error: entered value must be comprised within {0;1;2}")
         sp.verify_equal(sp.sender, self.data.admin,
                         message="Error: you cannot update the game status")
         sp.verify(self.data.games.contains(params.game_id),
                   message="Error: this match does not exist")
         game = self.data.games[params.game_id]
-        sp.verify_equal(
-            game.status, 1, "Error: the game outcome cannot be updated")
+        sp.verify(sp.timestamp_from_utc_now() > game.match_timestamp,
+             message = "Error, match has not started yet") 
+        
         game.outcome = params.choice
     # Above entry points mimick the future oracle behaviour and are not meant to stay
 
@@ -243,18 +243,35 @@ def test():
     scenario += factory.new_game(sp.record(
         game_id=game1,
         team_a="France",
-        team_b="Angleterre"
+        team_b="Angleterre",
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
+
+
     )).run(sender=admin)
 
     game2 = "game2"
     scenario += factory.new_game(sp.record(
         game_id=game2,
         team_a="Nice",
-        team_b="Marseille"
+        team_b="Marseille",
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
+
+
+    )).run(sender=admin)
+
+    game3 = "game3"
+    scenario += factory.new_game(sp.record(
+        game_id=game3,
+        team_a="Lorient",
+        team_b="Vannes",
+        match_timestamp = sp.timestamp_from_utc(1971, 1, 1, 1, 1, 1)
+
+
     )).run(sender=admin)
 
     scenario.h1("Testing bet placing")
 
+    
     scenario += factory.bet_on_team_a(game1).run(
         sender=alice.address, amount=sp.tez(100))
 
@@ -289,39 +306,14 @@ def test():
 
     scenario += factory.unbet_on_team_b(game2).run(sender=bob.address)
 
-    scenario.h1("Testing states")
-
-    scenario += factory.next_status(sp.record(
-        game_id=game1
-    )).run(sender=admin.address)
-
+    scenario.h1("Testing outcome")
+    
     scenario += factory.set_outcome(sp.record(
-        game_id=game1,
+        game_id=game3,
         choice=1,
     )).run(sender=admin.address)
-
-    scenario += factory.next_status(sp.record(
-        game_id=game1
-    )).run(sender=admin.address)
-
-    scenario += factory.next_status(sp.record(
-        game_id=game2
-    )).run(sender=admin.address)
-
-    scenario += factory.set_outcome(sp.record(
-        game_id=game2,
-        choice=1,
-    )).run(sender=admin.address)
-
-    scenario += factory.next_status(sp.record(
-        game_id=game2
-    )).run(sender=admin.address)
-
-    scenario += factory.next_status(sp.record(
-        game_id = game2
-    )).run(sender = admin.address, valid=False)
-
-    scenario.h1("Testing gain redemption")
+  
+    scenario.h1("Testing winnings withdrawal")
 
     # These scenarios are supposed to fail
     scenario += factory.redeem_tez(sp.record(
@@ -334,16 +326,40 @@ def test():
 
     scenario += factory.redeem_tez(sp.record(
         game_id=game1
-    )).run(sender=mathis.address)
+    )).run(sender=mathis.address, valid=False)
 
     scenario += factory.redeem_tez(sp.record(
         game_id=game1
-    )).run(sender=victor.address)
+    )).run(sender=victor.address, valid=False)
 
     scenario += factory.redeem_tez(sp.record(
         game_id=game2
-    )).run(sender=alice.address)
+    )).run(sender=alice.address, valid=False)
 
     scenario += factory.redeem_tez(sp.record(
         game_id=game2
-    )).run(sender=mathis.address)
+    )).run(sender=mathis.address, valid=False)
+
+    scenario.h1("Placing bet but match has already started")
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender=alice.address, amount=sp.tez(100), valid=False)
+
+    scenario += factory.bet_on_team_b(game3).run(
+        sender=bob.address, amount=sp.tez(200), valid=False)
+
+    scenario += factory.bet_on_tie(game3).run(
+        sender=eloi.address, amount=sp.tez(600), valid=False)
+
+    scenario.h1("Setting outcome but match has not started")
+
+    scenario += factory.set_outcome(sp.record(
+        game_id=game2,
+        choice=2,
+    )).run(sender=admin.address, valid=False)
+
+    scenario += factory.set_outcome(sp.record(
+        game_id=game1,
+        choice=2,
+    )).run(sender=admin.address, valid=False)
+
