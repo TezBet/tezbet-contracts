@@ -159,6 +159,7 @@ class SoccerBetFactory(sp.Contract):
         sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
         game = self.data.games[params.game_id]
+        sp.verify((game.status == sp.int(0)) | (game.status == sp.int(1)), message = "Error: you cannot update the game status after it has ended")
         sp.if game.status == sp.int(1):
             game.status += 1
         sp.if game.status == sp.int(0):
@@ -258,6 +259,10 @@ def test():
     scenario += factory.next_status(sp.record(
         game_id = game2
     )).run(sender = admin.address)
+
+    scenario += factory.next_status(sp.record(
+        game_id = game2
+    )).run(sender = admin.address, valid=False)
 
     scenario.h1("Testing gain redemption")
 
