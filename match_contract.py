@@ -16,7 +16,7 @@ class SoccerBetFactory(sp.Contract):
 
         leaderboard_len = sp.to_int(sp.len(self.data.leaderboard))
         insertion_rank = sp.local("insertion_rank", leaderboard_len)
-
+     # course starting from the largest index
         sp.while (insertion_rank.value > 0) & (record_to_insert.amount_tx > self.data.leaderboard[insertion_rank.value - 1].amount_tx):
             self.data.leaderboard[insertion_rank.value] = self.data.leaderboard[insertion_rank.value - 1]
             insertion_rank.value -= 1
@@ -118,7 +118,7 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you do not have any bets to remove")
         sp.verify( (sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp), 
-                message = "Error, you cannot remove a bet anymore")
+            message = "Error, you cannot remove a bet anymore")
 
 
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
@@ -239,6 +239,11 @@ def test():
     jean_francois = sp.test_account("Jean-Francois")
     mathis = sp.test_account("Mathis")
     enguerrand = sp.test_account("Enguerrand")
+    hennequin = sp.test_account("Hennequin")
+    berger = sp.test_account("Berger")
+    levillain = sp.test_account("Levillain")
+    olivier = sp.test_account("Olivier")
+    pascal = sp.test_account("Pascal") 
 
     factory = SoccerBetFactory(admin.address)
     scenario += factory
@@ -275,7 +280,8 @@ def test():
 
     scenario.h1("Testing bet placing")
 
-    
+    #game 1 and 2 
+
     scenario += factory.bet_on_team_a(game1).run(
         sender=alice.address, amount=sp.tez(100))
 
@@ -300,11 +306,13 @@ def test():
     scenario += factory.bet_on_team_b(game2).run(
         sender=bob.address, amount=sp.tez(1000))
 
-    scenario += factory.bet_on_tie(game2).run(sender=bob.address,
-                                              amount=sp.tez(2000))
+    scenario += factory.bet_on_tie(game2).run(
+        sender=bob.address,amount=sp.tez(2000))
 
     scenario += factory.bet_on_team_a(game2).run(
         sender=gabriel.address, amount=sp.tez(10000))
+
+        #game3
 
     scenario += factory.bet_on_team_a(game3).run(
         sender = alice.address, amount=sp.tez(3000), now = sp.timestamp(1546297200))
@@ -318,7 +326,34 @@ def test():
     scenario += factory.bet_on_team_a(game3).run(
         sender = gabriel.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
 
-    
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = pascal.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = olivier.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = hennequin.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = berger.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = enguerrand.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = victor.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = jean_francois.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = mathis.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = pierre_antoine.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
     scenario.h1("Testing bet removal")
 
     scenario += factory.unbet_on_team_b(game2).run(sender=bob.address)
@@ -340,9 +375,42 @@ def test():
     scenario += factory.redeem_tez(sp.record(
         game_id=game3
     )).run(sender=gabriel.address)
-    
 
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=victor.address)
 
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=enguerrand.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=jean_francois.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=pierre_antoine.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=berger.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=pascal.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=hennequin.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=levillain.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=mathis.address)
 
     # These scenarios are supposed to fail
     scenario += factory.redeem_tez(sp.record(
@@ -392,3 +460,13 @@ def test():
         choice=2,
     )).run(sender=admin.address, valid=False)
 
+    scenario.h1("testing leaderboard length")
+    
+
+    scenario.verify(sp.len(factory.data.leaderboard) <= 10)
+
+    scenario.h1("testing that leaderboard's values are ranked from highest to lowest")
+
+    scenario.verify(factory.data.leaderboard[sp.to_int(0)] >= 
+            factory.data.leaderboard[sp.to_int(sp.len(factory.data.leaderboard))-1] )
+    
