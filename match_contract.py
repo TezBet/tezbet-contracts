@@ -69,7 +69,7 @@ class SoccerBetFactory(sp.Contract):
 
         
         sp.verify((sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp),
-             message = "Error, you cannot place a bet anymore") 
+             message = "Error, you can no longer place a bet on this match") 
 
 
         sp.verify(sp.amount >= sp.mutez(100000),
@@ -118,7 +118,7 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you do not have any bets to remove")
         sp.verify( (sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp), 
-            message = "Error, you cannot remove a bet anymore")
+            message = "Error, you can no longer remove a bet on this match")
 
 
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
