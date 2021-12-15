@@ -4,7 +4,8 @@ class SoccerBetFactory(sp.Contract):
     def __init__(self, admin):
         self.init(
             admin = admin,
-            games = sp.map(tkey = sp.TString)
+            games = sp.map(tkey = sp.TString),
+            archived_games = sp.map(tkey = sp.TString)
         )
     
     @sp.entry_point
@@ -117,6 +118,14 @@ class SoccerBetFactory(sp.Contract):
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
 
+    @sp.private_lambda(with_storage="read-write", with_operations=False, wrap_call=True)
+    def archive_game(self, params):
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
+        game = self.data.games[params.game_id]
+        sp.verify(game.outcome!=-1, message = "Error: current game is already archived")
+        self.data.archived_games[params.game_id] = game
+
+
     @sp.entry_point
     def redeem_tez(self, params):
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist anymore!")
@@ -166,12 +175,14 @@ class SoccerBetFactory(sp.Contract):
     
     @sp.entry_point
     def set_outcome(self, params):
-        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: entered value must be comprised within {0;1;2}")
+        sp.verify_equal(self.data.games[params.game_id].outcome, -1, "Error: curent game outcome has already been set")
         sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: entered value must be comprised within {0;1;2}")
         game = self.data.games[params.game_id]
         sp.verify_equal(game.status, 1, "Error: the game outcome cannot be updated")
         game.outcome = params.choice
+        self.archive_game(params)
     # Above entry points mimick the future oracle behaviour and are not meant to stay
 
 @sp.add_test(name = "Test Match Contract")
@@ -233,31 +244,29 @@ def test():
 
     scenario.h1("Testing states")
 
-    scenario += factory.next_status(sp.record(
-        game_id = game1
-    )).run(sender = admin.address)
+    scenario += factory.next_status(sp.record(game_id = game1)).run(sender = admin.address)
 
     scenario += factory.set_outcome(sp.record(
         game_id = game1,
         choice = 1,
     )).run(sender = admin.address)
 
-    scenario += factory.next_status(sp.record(
-        game_id = game1
-    )).run(sender = admin.address)
+    # Testing an outcome cannot be set twice
+    scenario += factory.set_outcome(sp.record(
+        game_id = game1,
+        choice = 2,
+    )).run(sender = admin.address, valid=False)
 
-    scenario += factory.next_status(sp.record(
-        game_id = game2
-    )).run(sender = admin.address)
+    scenario += factory.next_status(sp.record(game_id = game1)).run(sender = admin.address)
+
+    scenario += factory.next_status(sp.record(game_id = game2)).run(sender = admin.address)
 
     scenario += factory.set_outcome(sp.record(
         game_id = game2,
         choice = 1,
     )).run(sender = admin.address)
 
-    scenario += factory.next_status(sp.record(
-        game_id = game2
-    )).run(sender = admin.address)
+    scenario += factory.next_status(sp.record(game_id = game2)).run(sender = admin.address)
 
     scenario.h1("Testing gain redemption")
 
@@ -285,4 +294,3 @@ def test():
     scenario += factory.redeem_tez(sp.record(
         game_id = game2
     )).run(sender = mathis.address) 
-
