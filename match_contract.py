@@ -22,6 +22,13 @@ class SoccerBetFactory(sp.Contract):
             insertion_rank.value -= 1
         sp.if insertion_rank.value < 10:
             self.data.leaderboard[insertion_rank.value] = record_to_insert
+        
+
+        length = sp.local("length", sp.to_int(sp.len(self.data.leaderboard)))
+        sp.if (length.value >= 10):
+            sp.while length.value >= 10:
+                del self.data.leaderboard[length.value]
+                length.value -=1
 
     @sp.entry_point
     def new_game(self, params):
@@ -69,7 +76,7 @@ class SoccerBetFactory(sp.Contract):
 
         
         sp.verify((sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp),
-             message = "Error, you can no longer place a bet on this match") 
+             message = "Error, you cannot place a bet anymore") 
 
 
         sp.verify(sp.amount >= sp.mutez(100000),
@@ -118,7 +125,7 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you do not have any bets to remove")
         sp.verify( (sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp), 
-            message = "Error, you can no longer remove a bet on this match")
+            message = "Error, you cannot remove a bet anymore")
 
 
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
@@ -282,6 +289,7 @@ def test():
 
     #game 1 and 2 
 
+    
     scenario += factory.bet_on_team_a(game1).run(
         sender=alice.address, amount=sp.tez(100))
 
@@ -325,6 +333,9 @@ def test():
 
     scenario += factory.bet_on_team_a(game3).run(
         sender = gabriel.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = levillain.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
 
 
     scenario += factory.bet_on_team_a(game3).run(
@@ -440,13 +451,13 @@ def test():
     scenario.h1("Placing bet but match has already started")
 
     scenario += factory.bet_on_team_a(game3).run(
-        sender=alice.address, amount=sp.tez(100), valid=False)
+        sender=alice.address, amount=sp.tez(100), now = sp.timestamp(1640991600), valid=False)
 
     scenario += factory.bet_on_team_b(game3).run(
-        sender=bob.address, amount=sp.tez(200), valid=False)
+        sender=bob.address, amount=sp.tez(200), now = sp.timestamp(1640991600), valid=False)
 
     scenario += factory.bet_on_tie(game3).run(
-        sender=eloi.address, amount=sp.tez(600), valid=False)
+        sender=eloi.address, amount=sp.tez(600), now = sp.timestamp(1640991600), valid=False)
 
     scenario.h1("Setting outcome but match has not started")
 
@@ -467,6 +478,6 @@ def test():
 
     scenario.h1("testing that leaderboard's values are ranked from highest to lowest")
 
-    scenario.verify(factory.data.leaderboard[sp.to_int(0)] >= 
+    scenario.verify(factory.data.leaderboard[0] >=
             factory.data.leaderboard[sp.to_int(sp.len(factory.data.leaderboard))-1] )
     
