@@ -68,7 +68,7 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
 
         
-        sp.verify(sp.timestamp_from_utc_now() < game.match_timestamp,
+        sp.verify((sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp),
              message = "Error, you cannot place a bet anymore") 
 
 
@@ -117,8 +117,8 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you do not have any bets to remove")
-        sp.verify( sp.timestamp_from_utc_now() < game.match_timestamp, 
-                  message = "Error, you cannot remove a bet anymore")
+        sp.verify( (sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp), 
+                message = "Error, you cannot remove a bet anymore")
 
 
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
@@ -210,12 +210,16 @@ class SoccerBetFactory(sp.Contract):
     
     @sp.entry_point
     def set_outcome(self, params):
+
+        sp.verify((params.choice == 0) | (params.choice == 1) | (
+            params.choice == 2), message="Error: entered value must be comprised within {0;1;2}")
+
         sp.verify_equal(sp.sender, self.data.admin,
                         message="Error: you cannot update the game status")
         sp.verify(self.data.games.contains(params.game_id),
                   message="Error: this match does not exist")
         game = self.data.games[params.game_id]
-        sp.verify(sp.timestamp_from_utc_now() > game.match_timestamp,
+        sp.verify((sp.timestamp_from_utc_now() > game.match_timestamp) | (sp.now > game.match_timestamp),
              message = "Error, match has not started yet") 
         
         game.outcome = params.choice
@@ -264,7 +268,7 @@ def test():
         game_id=game3,
         team_a="Lorient",
         team_b="Vannes",
-        match_timestamp = sp.timestamp_from_utc(1971, 1, 1, 1, 1, 1)
+        match_timestamp = sp.timestamp_from_utc(2020, 1, 1, 1, 1, 1)
 
 
     )).run(sender=admin)
@@ -302,6 +306,19 @@ def test():
     scenario += factory.bet_on_team_a(game2).run(
         sender=gabriel.address, amount=sp.tez(10000))
 
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = alice.address, amount=sp.tez(3000), now = sp.timestamp(1546297200))
+    
+    scenario += factory.bet_on_team_b(game3).run(
+        sender = bob.address, amount = sp.tez(1000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_b(game3).run(
+        sender = eloi.address, amount = sp.tez(2000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game3).run(
+        sender = gabriel.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    
     scenario.h1("Testing bet removal")
 
     scenario += factory.unbet_on_team_b(game2).run(sender=bob.address)
@@ -310,10 +327,22 @@ def test():
     
     scenario += factory.set_outcome(sp.record(
         game_id=game3,
-        choice=1,
+        choice=0,
     )).run(sender=admin.address)
-  
-    scenario.h1("Testing winnings withdrawal")
+ 
+    scenario.h1("Testing winnings withdrawal ")
+
+    # These scenarios aren't supposed to fail
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=alice.address)
+
+    scenario += factory.redeem_tez(sp.record(
+        game_id=game3
+    )).run(sender=gabriel.address)
+    
+
+
 
     # These scenarios are supposed to fail
     scenario += factory.redeem_tez(sp.record(
