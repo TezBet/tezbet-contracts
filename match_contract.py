@@ -5,10 +5,10 @@ class SoccerBetFactory(sp.Contract):
     def __init__(self, admin):
         self.init(
             admin=admin,
-            games=sp.map(tkey=sp.TString),
-            archived_games = sp.map(tkey = sp.TString),
+            games=sp.map(tkey=sp.TInt),
+            archived_games = sp.map(tkey = sp.TInt),
             leaderboard=sp.map(
-                tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TString))    
+                tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TInt))    
         )
 
     def insert_in_leaderboard(self, record_to_insert):
@@ -173,10 +173,10 @@ class SoccerBetFactory(sp.Contract):
 
 
     @sp.entry_point
-    def redeem_tez(self, params):
-        sp.verify(self.data.games.contains(params.game_id),
+    def redeem_tez(self, game_id):
+        sp.verify(self.data.games.contains(game_id),
                   message="Error: this match does not exist anymore!")
-        game = self.data.games[params.game_id]
+        game = self.data.games[game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you did not place a bet on this match")
         sp.verify(game.outcome != -1, 
@@ -201,7 +201,7 @@ class SoccerBetFactory(sp.Contract):
             bet_by_user.tie = sp.tez(0)
 
         self.insert_in_leaderboard(sp.record(
-            better_address=sp.sender, amount_tx=amount_to_send.value, game_id=params.game_id))
+            better_address=sp.sender, amount_tx=amount_to_send.value, game_id=game_id))
 
         sp.send(sp.sender, amount_to_send.value)
         game.redeemed += 1
@@ -210,16 +210,16 @@ class SoccerBetFactory(sp.Contract):
             del game.bet_amount_by_user[sp.sender]
 
         sp.if (game.outcome == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
-            del self.data.games[params.game_id]
+            del self.data.games[game_id]
         sp.else:
             sp.if (game.outcome == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
-                del self.data.games[params.game_id]
+                del self.data.games[game_id]
             sp.else:
 
 
 
                 sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
-                    del self.data.games[params.game_id]
+                    del self.data.games[game_id]
 
     # Below entry points mimick the future oracle behaviour and are not meant to stay
     
@@ -261,7 +261,7 @@ def test():
     factory = SoccerBetFactory(admin.address)
     scenario += factory
     scenario.h1("Testing game initialization")
-    game1 = "game1"
+    game1 = 1
     scenario += factory.new_game(sp.record(
         game_id=game1,
         team_a="France",
@@ -271,7 +271,7 @@ def test():
 
     )).run(sender=admin)
 
-    game2 = "game2"
+    game2 = 2
     scenario += factory.new_game(sp.record(
         game_id=game2,
         team_a="Nice",
@@ -281,7 +281,7 @@ def test():
 
     )).run(sender=admin)
 
-    game3 = "game3"
+    game3 = 3
     scenario += factory.new_game(sp.record(
         game_id=game3,
         team_a="Lorient",
@@ -391,75 +391,41 @@ def test():
     scenario.h1("Testing winnings withdrawal ")
 
     # These scenarios aren't supposed to fail
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=alice.address)
+    scenario += factory.redeem_tez(game3).run(sender=alice.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=gabriel.address)
+    scenario += factory.redeem_tez(game3).run(sender=gabriel.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=victor.address)
+    scenario += factory.redeem_tez(game3).run(sender=victor.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=enguerrand.address)
+    scenario += factory.redeem_tez(game3).run(sender=enguerrand.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=jean_francois.address)
+    scenario += factory.redeem_tez(game3).run(sender=jean_francois.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=pierre_antoine.address)
+    scenario += factory.redeem_tez(game3).run(sender=pierre_antoine.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=berger.address)
+    scenario += factory.redeem_tez(game3).run(sender=berger.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=pascal.address)
+    scenario += factory.redeem_tez(game3).run(sender=pascal.address)
 
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=hennequin.address)
+    scenario += factory.redeem_tez(game3).run(sender=hennequin.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=levillain.address)
+    scenario += factory.redeem_tez(game3).run(sender=levillain.address)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game3
-    )).run(sender=mathis.address)
+    scenario += factory.redeem_tez(game3).run(sender=mathis.address)
 
     # These scenarios are supposed to fail
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game1
-    )).run(sender=alice.address, valid=False)
+    scenario += factory.redeem_tez(game1).run(sender=alice.address, valid=False)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game2
-    )).run(sender=pierre_antoine.address, valid=False)
+    scenario += factory.redeem_tez(game2).run(sender=pierre_antoine.address, valid=False)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game1
-    )).run(sender=mathis.address, valid=False)
+    scenario += factory.redeem_tez(game1).run(sender=mathis.address, valid=False)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game1
-    )).run(sender=victor.address, valid=False)
+    scenario += factory.redeem_tez(game1).run(sender=victor.address, valid=False)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game2
-    )).run(sender=alice.address, valid=False)
+    scenario += factory.redeem_tez(game2).run(sender=alice.address, valid=False)
 
-    scenario += factory.redeem_tez(sp.record(
-        game_id=game2
-    )).run(sender=mathis.address, valid=False)
+    scenario += factory.redeem_tez(game2).run(sender=mathis.address, valid=False)
 
     scenario.h1("Placing bet but match has already started")
 
