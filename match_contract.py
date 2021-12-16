@@ -231,8 +231,7 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
 
         game = self.data.games[params.game_id]
-        sp.verify((sp.timestamp_from_utc_now() > game.match_timestamp) | (sp.now > game.match_timestamp),
-             message = "Error, match has not started yet") 
+        sp.verify(sp.now > game.match_timestamp, message = "Error, match has not started yet") 
         
         game.outcome = params.choice
         self.archive_game(params)
