@@ -6,9 +6,9 @@ class SoccerBetFactory(sp.Contract):
         self.init(
             admin=admin,
             games=sp.map(tkey=sp.TString),
+            archived_games = sp.map(tkey = sp.TString),
             leaderboard=sp.map(
-                tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TString))
-            
+                tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TString))    
         )
 
     def insert_in_leaderboard(self, record_to_insert):
@@ -164,6 +164,14 @@ class SoccerBetFactory(sp.Contract):
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
 
+    @sp.private_lambda(with_storage="read-write", with_operations=False, wrap_call=True)
+    def archive_game(self, params):
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
+        game = self.data.games[params.game_id]
+        sp.verify(game.outcome!=-1, message = "Error: current game is already archived")
+        self.data.archived_games[params.game_id] = game
+
+
     @sp.entry_point
     def redeem_tez(self, params):
         sp.verify(self.data.games.contains(params.game_id),
@@ -217,19 +225,17 @@ class SoccerBetFactory(sp.Contract):
     
     @sp.entry_point
     def set_outcome(self, params):
+        sp.verify_equal(self.data.games[params.game_id].outcome, -1, "Error: curent game outcome has already been set")
+        sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: entered value must be comprised within {0;1;2}")
+        sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
 
-        sp.verify((params.choice == 0) | (params.choice == 1) | (
-            params.choice == 2), message="Error: entered value must be comprised within {0;1;2}")
-
-        sp.verify_equal(sp.sender, self.data.admin,
-                        message="Error: you cannot update the game status")
-        sp.verify(self.data.games.contains(params.game_id),
-                  message="Error: this match does not exist")
         game = self.data.games[params.game_id]
         sp.verify((sp.timestamp_from_utc_now() > game.match_timestamp) | (sp.now > game.match_timestamp),
              message = "Error, match has not started yet") 
         
         game.outcome = params.choice
+        self.archive_game(params)
     # Above entry points mimick the future oracle behaviour and are not meant to stay
 
 
@@ -344,6 +350,12 @@ def test():
     scenario += factory.bet_on_team_a(game3).run(
         sender = olivier.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
 
+    # Testing an outcome cannot be set twice
+    scenario += factory.set_outcome(sp.record(
+        game_id = game1,
+        choice = 2,
+    )).run(sender = admin.address, valid=False)
+
     scenario += factory.bet_on_team_a(game3).run(
         sender = hennequin.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
 
@@ -411,6 +423,7 @@ def test():
         game_id=game3
     )).run(sender=pascal.address)
 
+
     scenario += factory.redeem_tez(sp.record(
         game_id=game3
     )).run(sender=hennequin.address)
@@ -471,13 +484,11 @@ def test():
         choice=2,
     )).run(sender=admin.address, valid=False)
 
-    scenario.h1("testing leaderboard length")
-    
-
+    # Testing leaderboard length
     scenario.verify(sp.len(factory.data.leaderboard) <= 10)
 
-    scenario.h1("testing that leaderboard's values are ranked from highest to lowest")
+    # Testing that leaderboard's values are ranked from highest to lowest")
+    scenario.verify(factory.data.leaderboard[0] >= factory.data.leaderboard[sp.to_int(sp.len(factory.data.leaderboard))-1] )
+ 
 
-    scenario.verify(factory.data.leaderboard[0] >=
-            factory.data.leaderboard[sp.to_int(sp.len(factory.data.leaderboard))-1] )
-    
+ 
