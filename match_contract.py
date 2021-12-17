@@ -162,38 +162,21 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.outcome != -1, 
                   message = "Error, you cannot be reimbursed yet")
         game = self.data.games[game_id]
-        bet_by_team_a = game.bet_amount_on.team_a
-        bet_by_team_b = game.bet_amount_on.team_b
-        bet_by_tie = game.bet_amount_on.tie
+
+        sp.if game.outcome == sp.int(0):
+            bet_on_winners = game.bet_amount_on.team_a
+        sp.if game.outcome == sp.int(1):
+            bet_on_winners = game.bet_amount_on.tie
+        sp.if game.outcome == sp.int(2):
+            bet_on_winners = game.bet_amount_on.team_b
 
         bet_by_user = game.bet_amount_by_user[sp.sender]
 
-    
-        sp.verify(((game.outcome == sp.int(0)) & (bet_by_team_a == sp.mutez(0))) | ((game.outcome == sp.int(1)) & (bet_by_team_b == sp.mutez(
-            0))) | ((game.outcome == sp.int(2)) & (bet_by_tie == sp.mutez(0))), message="Error: you have lost your bet! :(")
+        sp.verify(bet_on_winners == sp.mutez(0), "Error: you cannot be reimbursed")
 
-        amount_to_send = sp.local("amount_to_send", sp.tez(0))
+        amount_to_send = bet_by_user.team_a +  bet_by_user.tie + bet_by_user.team_b
 
-        sp.if game.outcome == sp.int(0):
-            sp.if bet_by_user.team_b != sp.mutez(0):
-                amount_to_send.value = bet_by_user.team_b 
-            sp.else:
-                amount_to_send.value = bet_by_user.tie
-            bet_by_user.team_a = sp.tez(0)
-        sp.if game.outcome == sp.int(1):
-            sp.if bet_by_user.team_a != sp.mutez(0):
-                amount_to_send.value = bet_by_user.team_a 
-            sp.else:
-                amount_to_send.value = bet_by_user.tie
-            bet_by_user.team_b = sp.tez(0)
-        sp.if game.outcome == sp.int(2):
-            sp.if bet_by_user.team_a != sp.mutez(0):
-                amount_to_send.value = bet_by_user.team_a
-            sp.else:
-                amount_to_send.value = bet_by_user.team_b
-            bet_by_user.tie = sp.tez(0)
-
-        sp.send(sp.sender, amount_to_send.value)
+        sp.send(sp.sender, amount_to_send)
         
     @sp.entry_point
     def redeem_tez(self, game_id):
@@ -325,11 +308,7 @@ def test():
 
     scenario.h1("Testing bet placing")
 
-
-
-
     #game 1 and 2 
-
     
     scenario += factory.bet_on_team_a(game1).run(
         sender=alice.address, amount=sp.tez(100))
@@ -500,10 +479,8 @@ def test():
         choice=2,
     )).run(sender=admin.address, valid=False)
 
-
     scenario.h1("testing reimbursment")
 
-    
     scenario += factory.reimburse(game4).run(sender = hennequin.address)
-    scenario += factory.reimburse(game4).run(sender=olivier.address)
+    scenario += factory.reimburse(game4).run(sender = olivier.address)
 
