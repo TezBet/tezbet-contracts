@@ -43,6 +43,7 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.private_lambda(with_storage="read-write", with_operations=False, wrap_call=True)
     def add_bet(self, params):
+         
         sp.verify(self.data.games.contains(params.game_id))
         game = self.data.games[params.game_id]
         sp.verify(sp.now < game.match_timestamp,message = "Error, you cannot place a bet anymore") 
