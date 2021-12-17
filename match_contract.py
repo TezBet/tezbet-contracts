@@ -7,28 +7,9 @@ class SoccerBetFactory(sp.Contract):
             admin=admin,
             games=sp.map(tkey=sp.TInt),
             archived_games = sp.map(tkey = sp.TInt),
-            leaderboard=sp.map(
-                tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TInt))    
-        )
+           )
 
-    def insert_in_leaderboard(self, record_to_insert):
-        sp.verify(self.data.games.contains(record_to_insert.game_id))
-
-        leaderboard_len = sp.to_int(sp.len(self.data.leaderboard))
-        insertion_rank = sp.local("insertion_rank", leaderboard_len)
-     # course starting from the largest index
-        sp.while (insertion_rank.value > 0) & (record_to_insert.amount_tx > self.data.leaderboard[insertion_rank.value - 1].amount_tx):
-            self.data.leaderboard[insertion_rank.value] = self.data.leaderboard[insertion_rank.value - 1]
-            insertion_rank.value -= 1
-        sp.if insertion_rank.value < 10:
-            self.data.leaderboard[insertion_rank.value] = record_to_insert
-        
-
-        length = sp.local("length", sp.to_int(sp.len(self.data.leaderboard)))
-        sp.if (length.value >= 10):
-            sp.while length.value >= 10:
-                del self.data.leaderboard[length.value]
-                length.value -=1
+    
 
     @sp.entry_point
     def new_game(self, params):
@@ -171,7 +152,49 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.outcome!=-1, message = "Error: current game is already archived")
         self.data.archived_games[params.game_id] = game
 
+    @sp.entry_point
+    def reimburse(self, game_id):
+        game = self.data.games[game_id]
+        sp.verify(self.data.games.contains(game_id),
+                  message="Error: this match does not exist anymore!")
+        sp.verify(game.bet_amount_by_user.contains(sp.sender),
+                  message="Error: you did not place a bet on this match")
+        sp.verify(game.outcome != -1, 
+                  message = "Error, you cannot be reimbursed yet")
+        game = self.data.games[game_id]
+        bet_by_team_a = game.bet_amount_on.team_a
+        bet_by_team_b = game.bet_amount_on.team_b
+        bet_by_tie = game.bet_amount_on.tie
 
+        bet_by_user = game.bet_amount_by_user[sp.sender]
+
+    
+        sp.verify(((game.outcome == sp.int(0)) & (bet_by_team_a == sp.mutez(0))) | ((game.outcome == sp.int(1)) & (bet_by_team_b == sp.mutez(
+            0))) | ((game.outcome == sp.int(2)) & (bet_by_tie == sp.mutez(0))), message="Error: you have lost your bet! :(")
+
+        amount_to_send = sp.local("amount_to_send", sp.tez(0))
+
+        sp.if game.outcome == sp.int(0):
+            sp.if bet_by_user.team_b != sp.mutez(0):
+                amount_to_send.value = bet_by_user.team_b 
+            sp.else:
+                amount_to_send.value = bet_by_user.tie
+            bet_by_user.team_a = sp.tez(0)
+        sp.if game.outcome == sp.int(1):
+            sp.if bet_by_user.team_a != sp.mutez(0):
+                amount_to_send.value = bet_by_user.team_a 
+            sp.else:
+                amount_to_send.value = bet_by_user.tie
+            bet_by_user.team_b = sp.tez(0)
+        sp.if game.outcome == sp.int(2):
+            sp.if bet_by_user.team_a != sp.mutez(0):
+                amount_to_send.value = bet_by_user.team_a
+            sp.else:
+                amount_to_send.value = bet_by_user.team_b
+            bet_by_user.tie = sp.tez(0)
+
+        sp.send(sp.sender, amount_to_send.value)
+        
     @sp.entry_point
     def redeem_tez(self, game_id):
         sp.verify(self.data.games.contains(game_id),
@@ -200,9 +223,7 @@ class SoccerBetFactory(sp.Contract):
                 game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.tie))
             bet_by_user.tie = sp.tez(0)
 
-        self.insert_in_leaderboard(sp.record(
-            better_address=sp.sender, amount_tx=amount_to_send.value, game_id=game_id))
-
+        
         sp.send(sp.sender, amount_to_send.value)
         game.redeemed += 1
 
@@ -231,7 +252,7 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
 
         game = self.data.games[params.game_id]
-        sp.verify(sp.now > game.match_timestamp, message = "Error, match has not started yet") 
+        sp.verify((sp.now > game.match_timestamp) | (sp.timestamp_from_utc_now() > game.match_timestamp) , message = "Error, match has not started yet") 
         
         game.outcome = params.choice
         self.archive_game(params)
@@ -290,7 +311,22 @@ def test():
 
     )).run(sender=admin)
 
+   
+
+    game4 = 4
+    scenario += factory.new_game(sp.record(
+        game_id=game4,
+        team_a="Fr",
+        team_b="Uk",
+        match_timestamp = sp.timestamp_from_utc(2020, 1, 1, 1, 1, 1)
+
+
+    )).run(sender=admin)
+
     scenario.h1("Testing bet placing")
+
+
+
 
     #game 1 and 2 
 
@@ -348,6 +384,21 @@ def test():
 
     scenario += factory.bet_on_team_a(game3).run(
         sender = olivier.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    #game 4
+
+    scenario += factory.bet_on_team_a(game4).run(
+        sender = olivier.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game4).run(
+        sender = hennequin.address, amount = sp.tez(3000), now = sp.timestamp(1546297200))
+
+    #setting outcome game 4
+
+    scenario += factory.set_outcome(sp.record(
+        game_id = game4,
+        choice = 1,
+    )).run(sender = admin.address)
 
     # Testing an outcome cannot be set twice
     scenario += factory.set_outcome(sp.record(
@@ -449,11 +500,10 @@ def test():
         choice=2,
     )).run(sender=admin.address, valid=False)
 
-    # Testing leaderboard length
-    scenario.verify(sp.len(factory.data.leaderboard) <= 10)
 
-    # Testing that leaderboard's values are ranked from highest to lowest")
-    scenario.verify(factory.data.leaderboard[0] >= factory.data.leaderboard[sp.to_int(sp.len(factory.data.leaderboard))-1] )
- 
+    scenario.h1("testing reimbursment")
 
- 
+    
+    scenario += factory.reimburse(game4).run(sender = hennequin.address)
+    scenario += factory.reimburse(game4).run(sender=olivier.address)
+
