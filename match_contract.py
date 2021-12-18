@@ -7,28 +7,9 @@ class SoccerBetFactory(sp.Contract):
             admin=admin,
             games=sp.map(tkey=sp.TInt),
             archived_games = sp.map(tkey = sp.TInt),
-            leaderboard=sp.map(
-                tkey=sp.TInt, tvalue=sp.TRecord(better_address=sp.TAddress, amount_tx=sp.TMutez, game_id=sp.TInt))    
-        )
+           )
 
-    def insert_in_leaderboard(self, record_to_insert):
-        sp.verify(self.data.games.contains(record_to_insert.game_id))
-
-        leaderboard_len = sp.to_int(sp.len(self.data.leaderboard))
-        insertion_rank = sp.local("insertion_rank", leaderboard_len)
-     # course starting from the largest index
-        sp.while (insertion_rank.value > 0) & (record_to_insert.amount_tx > self.data.leaderboard[insertion_rank.value - 1].amount_tx):
-            self.data.leaderboard[insertion_rank.value] = self.data.leaderboard[insertion_rank.value - 1]
-            insertion_rank.value -= 1
-        sp.if insertion_rank.value < 10:
-            self.data.leaderboard[insertion_rank.value] = record_to_insert
-        
-
-        length = sp.local("length", sp.to_int(sp.len(self.data.leaderboard)))
-        sp.if (length.value >= 10):
-            sp.while length.value >= 10:
-                del self.data.leaderboard[length.value]
-                length.value -=1
+    
 
     @sp.entry_point
     def new_game(self, params):
@@ -75,7 +56,7 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
 
         
-        sp.verify((sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp),
+        sp.verify(sp.now < game.match_timestamp,
              message = "Error, you cannot place a bet anymore") 
 
 
@@ -124,7 +105,7 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.verify(game.bet_amount_by_user.contains(sp.sender),
                   message="Error: you do not have any bets to remove")
-        sp.verify( (sp.now < game.match_timestamp) | (sp.timestamp_from_utc_now() < game.match_timestamp), 
+        sp.verify( sp.now < game.match_timestamp, 
             message = "Error, you cannot remove a bet anymore")
 
 
@@ -171,7 +152,32 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.outcome!=-1, message = "Error: current game is already archived")
         self.data.archived_games[params.game_id] = game
 
+    @sp.entry_point
+    def reimburse(self, game_id):
+        game = self.data.games[game_id]
+        sp.verify(self.data.games.contains(game_id),
+                  message="Error: this match does not exist anymore!")
+        sp.verify(game.bet_amount_by_user.contains(sp.sender),
+                  message="Error: you did not place a bet on this match")
+        sp.verify(game.outcome != -1, 
+                  message = "Error, you cannot be reimbursed yet")
+        game = self.data.games[game_id]
 
+        sp.if game.outcome == sp.int(0):
+            bet_on_winners = game.bet_amount_on.team_a
+        sp.if game.outcome == sp.int(1):
+            bet_on_winners = game.bet_amount_on.tie
+        sp.if game.outcome == sp.int(2):
+            bet_on_winners = game.bet_amount_on.team_b
+
+        bet_by_user = game.bet_amount_by_user[sp.sender]
+
+        sp.verify(bet_on_winners == sp.mutez(0), "Error: you cannot be reimbursed")
+
+        amount_to_send = bet_by_user.team_a +  bet_by_user.tie + bet_by_user.team_b
+
+        sp.send(sp.sender, amount_to_send)
+        
     @sp.entry_point
     def redeem_tez(self, game_id):
         sp.verify(self.data.games.contains(game_id),
@@ -200,9 +206,7 @@ class SoccerBetFactory(sp.Contract):
                 game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.tie))
             bet_by_user.tie = sp.tez(0)
 
-        self.insert_in_leaderboard(sp.record(
-            better_address=sp.sender, amount_tx=amount_to_send.value, game_id=game_id))
-
+        
         sp.send(sp.sender, amount_to_send.value)
         game.redeemed += 1
 
@@ -265,7 +269,8 @@ def test():
         game_id=game1,
         team_a="France",
         team_b="Angleterre",
-        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1),
+        
 
 
     )).run(sender=admin)
@@ -275,7 +280,8 @@ def test():
         game_id=game2,
         team_a="Nice",
         team_b="Marseille",
-        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1),
+        
 
 
     )).run(sender=admin)
@@ -285,7 +291,21 @@ def test():
         game_id=game3,
         team_a="Lorient",
         team_b="Vannes",
-        match_timestamp = sp.timestamp_from_utc(2020, 1, 1, 1, 1, 1)
+        match_timestamp = sp.timestamp_from_utc(2020, 1, 1, 1, 1, 1), 
+        
+
+
+    )).run(sender=admin)
+
+   
+
+    game4 = 4
+    scenario += factory.new_game(sp.record(
+        game_id=game4,
+        team_a="Fr",
+        team_b="Uk",
+        match_timestamp = sp.timestamp_from_utc(2020, 1, 1, 1, 1, 1), 
+        
 
 
     )).run(sender=admin)
@@ -293,37 +313,36 @@ def test():
     scenario.h1("Testing bet placing")
 
     #game 1 and 2 
-
     
     scenario += factory.bet_on_team_a(game1).run(
-        sender=alice.address, amount=sp.tez(100))
+        sender=alice.address, amount=sp.tez(100), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_b(game1).run(
-        sender=mathis.address, amount=sp.tez(1000))
+        sender=mathis.address, amount=sp.tez(1000), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_b(game2).run(
-        sender=mathis.address, amount=sp.tez(7500))
+        sender=mathis.address, amount=sp.tez(7500), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_b(game2).run(
-        sender=enguerrand.address, amount=sp.tez(500))
+        sender=enguerrand.address, amount=sp.tez(500), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_a(game1).run(
-        sender=pierre_antoine.address, amount=sp.tez(2000))
+        sender=pierre_antoine.address, amount=sp.tez(2000), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_b(game1).run(
-        sender=victor.address, amount=sp.tez(5000))
+        sender=victor.address, amount=sp.tez(5000), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_b(game2).run(
-        sender=alice.address, amount=sp.tez(1000))
+        sender=alice.address, amount=sp.tez(1000), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_b(game2).run(
-        sender=bob.address, amount=sp.tez(1000))
+        sender=bob.address, amount=sp.tez(1000), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_tie(game2).run(
-        sender=bob.address,amount=sp.tez(2000))
+        sender=bob.address,amount=sp.tez(2000), now = sp.timestamp_from_utc_now())
 
     scenario += factory.bet_on_team_a(game2).run(
-        sender=gabriel.address, amount=sp.tez(10000))
+        sender=gabriel.address, amount=sp.tez(10000), now = sp.timestamp_from_utc_now())
 
         #game3
 
@@ -349,11 +368,26 @@ def test():
     scenario += factory.bet_on_team_a(game3).run(
         sender = olivier.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
 
+    #game 4
+
+    scenario += factory.bet_on_team_a(game4).run(
+        sender = olivier.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
+
+    scenario += factory.bet_on_team_a(game4).run(
+        sender = hennequin.address, amount = sp.tez(3000), now = sp.timestamp(1546297200))
+
+    #setting outcome game 4
+
+    scenario += factory.set_outcome(sp.record(
+        game_id = game4,
+        choice = 1,
+    )).run(sender = admin.address, now = sp.timestamp_from_utc_now())
+
     # Testing an outcome cannot be set twice
     scenario += factory.set_outcome(sp.record(
         game_id = game1,
         choice = 2,
-    )).run(sender = admin.address, valid=False)
+    )).run(sender = admin.address, now = sp.timestamp_from_utc_now(), valid=False)
 
     scenario += factory.bet_on_team_a(game3).run(
         sender = hennequin.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
@@ -385,51 +419,51 @@ def test():
     scenario += factory.set_outcome(sp.record(
         game_id=game3,
         choice=0,
-    )).run(sender=admin.address)
+    )).run(sender=admin.address, now = sp.timestamp_from_utc_now())
  
     scenario.h1("Testing winnings withdrawal ")
 
     # These scenarios aren't supposed to fail
-    scenario += factory.redeem_tez(game3).run(sender=alice.address)
+    scenario += factory.redeem_tez(game3).run(sender=alice.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=gabriel.address)
+    scenario += factory.redeem_tez(game3).run(sender=gabriel.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=victor.address)
+    scenario += factory.redeem_tez(game3).run(sender=victor.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=enguerrand.address)
+    scenario += factory.redeem_tez(game3).run(sender=enguerrand.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=jean_francois.address)
+    scenario += factory.redeem_tez(game3).run(sender=jean_francois.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=pierre_antoine.address)
+    scenario += factory.redeem_tez(game3).run(sender=pierre_antoine.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=berger.address)
+    scenario += factory.redeem_tez(game3).run(sender=berger.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=pascal.address)
+    scenario += factory.redeem_tez(game3).run(sender=pascal.address, now = sp.timestamp_from_utc_now())
 
 
-    scenario += factory.redeem_tez(game3).run(sender=hennequin.address)
+    scenario += factory.redeem_tez(game3).run(sender=hennequin.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=levillain.address)
+    scenario += factory.redeem_tez(game3).run(sender=levillain.address, now = sp.timestamp_from_utc_now())
 
-    scenario += factory.redeem_tez(game3).run(sender=mathis.address)
+    scenario += factory.redeem_tez(game3).run(sender=mathis.address, now = sp.timestamp_from_utc_now())
 
     # These scenarios are supposed to fail
-    scenario += factory.redeem_tez(game1).run(sender=alice.address, valid=False)
+    scenario += factory.redeem_tez(game1).run(sender=alice.address, now = sp.timestamp_from_utc_now(), valid=False)
 
-    scenario += factory.redeem_tez(game2).run(sender=pierre_antoine.address, valid=False)
+    scenario += factory.redeem_tez(game2).run(sender=pierre_antoine.address, now = sp.timestamp_from_utc_now(), valid=False)
 
-    scenario += factory.redeem_tez(game1).run(sender=mathis.address, valid=False)
+    scenario += factory.redeem_tez(game1).run(sender=mathis.address, now = sp.timestamp_from_utc_now(), valid=False)
 
-    scenario += factory.redeem_tez(game1).run(sender=victor.address, valid=False)
+    scenario += factory.redeem_tez(game1).run(sender=victor.address, now = sp.timestamp_from_utc_now(), valid=False)
 
-    scenario += factory.redeem_tez(game2).run(sender=alice.address, valid=False)
+    scenario += factory.redeem_tez(game2).run(sender=alice.address, now = sp.timestamp_from_utc_now(), valid=False)
 
-    scenario += factory.redeem_tez(game2).run(sender=mathis.address, valid=False)
+    scenario += factory.redeem_tez(game2).run(sender=mathis.address, now = sp.timestamp_from_utc_now(), valid=False)
 
     scenario.h1("Placing bet but match has already started")
 
     scenario += factory.bet_on_team_a(game3).run(
-        sender=alice.address, amount=sp.tez(100), now = sp.timestamp(1640991600), valid=False)
+        sender=alice.address, amount=sp.tez(100), now = sp.timestamp_from_utc_now(), valid=False)
 
     scenario += factory.bet_on_team_b(game3).run(
         sender=bob.address, amount=sp.tez(200), now = sp.timestamp(1640991600), valid=False)
@@ -442,18 +476,15 @@ def test():
     scenario += factory.set_outcome(sp.record(
         game_id=game2,
         choice=2,
-    )).run(sender=admin.address, valid=False)
+    )).run(sender=admin.address, now = sp.timestamp_from_utc_now(), valid=False)
 
     scenario += factory.set_outcome(sp.record(
         game_id=game1,
         choice=2,
-    )).run(sender=admin.address, valid=False)
+    )).run(sender=admin.address, now = sp.timestamp_from_utc_now(), valid=False)
 
-    # Testing leaderboard length
-    scenario.verify(sp.len(factory.data.leaderboard) <= 10)
+    scenario.h1("testing reimbursment")
 
-    # Testing that leaderboard's values are ranked from highest to lowest")
-    scenario.verify(factory.data.leaderboard[0] >= factory.data.leaderboard[sp.to_int(sp.len(factory.data.leaderboard))-1] )
- 
+    scenario += factory.reimburse(game4).run(sender = hennequin.address, now = sp.timestamp_from_utc_now())
+    scenario += factory.reimburse(game4).run(sender = olivier.address, now = sp.timestamp_from_utc_now())
 
- 
