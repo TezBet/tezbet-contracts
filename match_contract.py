@@ -210,9 +210,11 @@ class SoccerBetFactory(sp.Contract):
         game = self.data.games[params.game_id]
         sp.verify(sp.now > game.match_timestamp, message = "Error: match has not started yet") 
         game.outcome = params.choice
-        self.archive_game(params)
         sp.if (game.bet_amount_on.team_a == sp.tez(0)) & (game.bet_amount_on.team_b == sp.tez(0)) & (game.bet_amount_on.tie == sp.tez(0)):
             del self.data.games[params.game_id]
+        sp.else:
+            self.archive_game(params)
+
     # Above entry points mimick the future oracle behaviour and are not meant to stay
 
 
