@@ -203,14 +203,16 @@ class SoccerBetFactory(sp.Contract):
     # Below entry points mimick the future oracle behaviour and are not meant to stay
     @sp.entry_point
     def set_outcome(self, params):
-        sp.verify_equal(self.data.games[params.game_id].outcome, -1, "Error: curent game outcome has already been set")
+        sp.verify_equal(self.data.games[params.game_id].outcome, -1, "Error: current game outcome has already been set")
         sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
-        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2) | (params.choice == 10), message = "Error: entered value must be comprised within {0;1;2}")
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2) | (params.choice == 10), message = "Error: entered value must be comprised in {0;1;2}")
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
         game = self.data.games[params.game_id]
-        sp.verify(sp.now > game.match_timestamp, message = "Error, match has not started yet") 
+        sp.verify(sp.now > game.match_timestamp, message = "Error: match has not started yet") 
         game.outcome = params.choice
         self.archive_game(params)
+        sp.if (game.bet_amount_on.team_a == sp.tez(0)) & (game.bet_amount_on.team_b == sp.tez(0)) & (game.bet_amount_on.tie == sp.tez(0)):
+            del self.data.games[params.game_id]
     # Above entry points mimick the future oracle behaviour and are not meant to stay
 
 
@@ -265,6 +267,14 @@ def test():
         game_id=game5,
         team_a="Olympique Lyonnais",
         team_b="PSG",
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
+    )).run(sender=admin)
+
+    game6 = 6
+    scenario += factory.new_game(sp.record(
+        game_id=game6,
+        team_a="Luxembourg",
+        team_b="Malte",
         match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
     )).run(sender=admin)
 
@@ -353,6 +363,9 @@ def test():
     scenario += factory.set_outcome(sp.record(game_id = game1, choice = 1)).run(sender=admin.address, now = sp.timestamp(1640998862))
 
     scenario += factory.set_outcome(sp.record(game_id = game2, choice = 1)).run(sender=admin.address, now = sp.timestamp(1640998862))
+
+    # Testing the deletion of games with no bet records
+    scenario += factory.set_outcome(sp.record(game_id = game6, choice = 1)).run(sender=admin.address, now = sp.timestamp(1640998862))
 
     # Testing cancelled/postponed outcome
     scenario += factory.set_outcome(sp.record(game_id = game5, choice = 10)).run(sender=admin.address, now = sp.timestamp(1640998862))
