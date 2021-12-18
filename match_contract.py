@@ -6,7 +6,8 @@ class SoccerBetFactory(sp.Contract):
         self.init(
             admin=admin,
             games=sp.map(tkey=sp.TInt),
-            archived_games = sp.map(tkey = sp.TInt)
+            archived_games = sp.map(tkey = sp.TInt),
+            remainder=sp.tez(0)
         )
 
     @sp.entry_point
@@ -211,6 +212,9 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(sp.now > game.match_timestamp, message = "Error: match has not started yet") 
         game.outcome = params.choice
         sp.if (game.bet_amount_on.team_a == sp.tez(0)) & (game.bet_amount_on.team_b == sp.tez(0)) & (game.bet_amount_on.tie == sp.tez(0)):
+            sp.if game.jackpot>sp.tez(0):
+                self.data.remainder+=game.jackpot
+                game.jackpot=sp.tez(0)
             del self.data.games[params.game_id]
         sp.else:
             self.archive_game(params)
@@ -278,6 +282,14 @@ def test():
         team_a="Luxembourg",
         team_b="Malte",
         match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
+    )).run(sender=admin)
+
+    game7 = 7
+    scenario += factory.new_game(sp.record(
+        game_id=game7,
+        team_a="Irlande",
+        team_b="Ecosse",
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 40)
     )).run(sender=admin)
 
     scenario.h1("Testing bet placing")
@@ -371,6 +383,16 @@ def test():
 
     # Testing cancelled/postponed outcome
     scenario += factory.set_outcome(sp.record(game_id = game5, choice = 10)).run(sender=admin.address, now = sp.timestamp(1640998862))
+
+    scenario.h1("Testing contract's remainder increase when no-bet games are deleted")
+
+    scenario += factory.bet_on_team_b(game7).run(sender=enguerrand.address, amount=sp.tez(2500), now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1))
+
+    scenario += factory.unbet_on_team_b(game7).run(sender=enguerrand.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 20))
+
+    scenario += factory.set_outcome(sp.record(game_id = game7, choice = 1)).run(sender=admin.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 59))
+
+    scenario.verify(factory.data.remainder>sp.tez(0))
 
     scenario.h1("Testing winnings withdrawal ")
 
