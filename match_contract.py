@@ -43,7 +43,6 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.private_lambda(with_storage="read-write", with_operations=False, wrap_call=True)
     def add_bet(self, params):
-         
         sp.verify(self.data.games.contains(params.game_id))
         game = self.data.games[params.game_id]
         sp.verify(sp.now < game.match_timestamp,message = "Error, you cannot place a bet anymore") 
@@ -153,29 +152,39 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.bet_amount_by_user.contains(sp.sender),message="Error: you did not place a bet on this match")
         sp.verify(game.outcome != -1, message = "Error, you cannot redeem your winnings yet")
         bet_by_user = game.bet_amount_by_user[sp.sender]
-        sp.verify(((game.outcome == sp.int(0)) & (bet_by_user.team_a > sp.tez(0))) | ((game.outcome == sp.int(1)) & (bet_by_user.team_b > sp.tez(0))) | ((game.outcome == sp.int(2)) & (bet_by_user.tie > sp.tez(0))), message="Error: you have lost your bet! :(")
+        sp.verify((game.outcome == sp.int(10)) | ((game.outcome == sp.int(0)) & (bet_by_user.team_a > sp.tez(0))) | ((game.outcome == sp.int(1)) & (bet_by_user.team_b > sp.tez(0))) | ((game.outcome == sp.int(2)) & (bet_by_user.tie > sp.tez(0))), message="Error: you have lost your bet! :(")
 
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
         jackpot_share = sp.local("jackpot_share", sp.tez(0))
 
+        # If a game is postponed or delayed, each player gets his money back
+        sp.if game.outcome == sp.int(10):
+            amount_to_send.value = bet_by_user.team_a + bet_by_user.team_b + bet_by_user.tie
+            jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie),sp.utils.mutez_to_nat(game.bet_amount_on.team_a + game.bet_amount_on.team_b +game.bet_amount_on.tie))
+
+            game.bet_amount_on.team_a -= bet_by_user.team_a
+            game.bet_amount_on.team_b -= bet_by_user.team_b
+            game.bet_amount_on.tie -= bet_by_user.tie
+            bet_by_user.team_a = sp.tez(0)
+            bet_by_user.team_b = sp.tez(0)
+            bet_by_user.tie = sp.tez(0)
+
         sp.if game.outcome == sp.int(0):
             amount_to_send.value = sp.split_tokens(bet_by_user.team_a, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_a))
             jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_a),sp.utils.mutez_to_nat(game.bet_amount_on.team_a))
-            game.jackpot-=jackpot_share.value
             bet_by_user.team_a = sp.tez(0)
 
         sp.if game.outcome == sp.int(1):
             amount_to_send.value = sp.split_tokens(bet_by_user.team_b, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_b))
             jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_b),sp.utils.mutez_to_nat(game.bet_amount_on.team_b))
-            game.jackpot-=jackpot_share.value
             bet_by_user.team_b = sp.tez(0)
             
         sp.if game.outcome == sp.int(2):
             amount_to_send.value = sp.split_tokens(bet_by_user.tie, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.tie))
             jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.tie),sp.utils.mutez_to_nat(game.bet_amount_on.tie))
-            game.jackpot-=jackpot_share.value
             bet_by_user.tie = sp.tez(0)
         
+        game.jackpot-=jackpot_share.value
         sp.send(sp.sender, amount_to_send.value+jackpot_share.value)
         game.redeemed += 1
 
@@ -192,17 +201,14 @@ class SoccerBetFactory(sp.Contract):
                     del self.data.games[game_id]
 
     # Below entry points mimick the future oracle behaviour and are not meant to stay
-    
     @sp.entry_point
     def set_outcome(self, params):
         sp.verify_equal(self.data.games[params.game_id].outcome, -1, "Error: curent game outcome has already been set")
         sp.verify_equal(sp.sender, self.data.admin, message = "Error: you cannot update the game status")
-        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2), message = "Error: entered value must be comprised within {0;1;2}")
+        sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2) | (params.choice == 10), message = "Error: entered value must be comprised within {0;1;2}")
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
-
         game = self.data.games[params.game_id]
         sp.verify(sp.now > game.match_timestamp, message = "Error, match has not started yet") 
-        
         game.outcome = params.choice
         self.archive_game(params)
     # Above entry points mimick the future oracle behaviour and are not meant to stay
@@ -227,10 +233,10 @@ def test():
     olivier = sp.test_account("Olivier")
     pascal = sp.test_account("Pascal") 
 
+    game1 = 1
     factory = SoccerBetFactory(admin.address)
     scenario += factory
     scenario.h1("Testing game initialization")
-    game1 = 1
     scenario += factory.new_game(sp.record(
         game_id=game1,
         team_a="France",
@@ -251,6 +257,14 @@ def test():
         game_id=game3,
         team_a="Lorient",
         team_b="Vannes",
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
+    )).run(sender=admin)
+
+    game5 = 5
+    scenario += factory.new_game(sp.record(
+        game_id=game5,
+        team_a="Olympique Lyonnais",
+        team_b="PSG",
         match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1)
     )).run(sender=admin)
 
@@ -312,6 +326,18 @@ def test():
     scenario += factory.bet_on_team_a(game3).run(
         sender = olivier.address, amount = sp.tez(4000), now = sp.timestamp(1546297200))
 
+    # Betting on game 5
+
+    scenario += factory.bet_on_team_b(game5).run(sender=mathis.address, amount=sp.tez(100), now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 0))
+
+    scenario += factory.unbet_on_team_b(game5).run(sender=mathis.address)
+
+    scenario += factory.bet_on_tie(game5).run(sender=mathis.address, amount=sp.tez(7500))
+
+    scenario += factory.bet_on_team_a(game5).run(sender=enguerrand.address, amount=sp.tez(500))
+
+    scenario += factory.bet_on_team_b(game5).run(sender=enguerrand.address, amount=sp.tez(2500))
+
     # Testing an outcome cannot be set twice
     scenario += factory.set_outcome(sp.record(
         game_id = game1,
@@ -327,6 +353,9 @@ def test():
     scenario += factory.set_outcome(sp.record(game_id = game1, choice = 1)).run(sender=admin.address, now = sp.timestamp(1640998862))
 
     scenario += factory.set_outcome(sp.record(game_id = game2, choice = 1)).run(sender=admin.address, now = sp.timestamp(1640998862))
+
+    # Testing cancelled/postponed outcome
+    scenario += factory.set_outcome(sp.record(game_id = game5, choice = 10)).run(sender=admin.address, now = sp.timestamp(1640998862))
 
     scenario.h1("Testing winnings withdrawal ")
 
@@ -349,6 +378,11 @@ def test():
     # Testing Pierre-Antoine cannot redeem gains from a bet he lost
     scenario += factory.redeem_tez(game1).run(sender=pierre_antoine.address, valid=False)
    
+    # Testing players can recover their bet amount when a game is cancelled/postponed
+    scenario += factory.redeem_tez(game5).run(sender=mathis.address)
+
+    scenario += factory.redeem_tez(game5).run(sender=enguerrand.address)
+
     scenario.h1("Setting outcome but match has not started")
 
     scenario += factory.set_outcome(sp.record(
