@@ -203,7 +203,8 @@ class SoccerBetFactory(sp.Contract):
         sp.verify((params.choice == 0) | (params.choice == 1) | (params.choice == 2) | (params.choice == 10), message = "Error: entered value must be comprised in {0;1;2}")
         sp.verify(self.data.games.contains(params.game_id), message = "Error: this match does not exist")
         game = self.data.games[params.game_id]
-        sp.verify(sp.now > game.match_timestamp, message = "Error: match has not started yet") 
+        sp.if params.choice != 10:
+            sp.verify(sp.now > game.match_timestamp, message = "Error: match has not started yet") 
         game.outcome = params.choice
         sp.if (game.bet_amount_on.team_a == sp.tez(0)) & (game.bet_amount_on.team_b == sp.tez(0)) & (game.bet_amount_on.tie == sp.tez(0)):
             sp.if game.jackpot>sp.tez(0):
