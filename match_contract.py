@@ -107,8 +107,7 @@ class SoccerBetFactory(sp.Contract):
             game.bet_amount_on.team_a -= bet_by_user.team_a
             amount_to_send.value = bet_by_user.team_a
             self.data.games[params.game_id].bets_by_choice.team_a -= sp.int(1)
-            sp.if time_diff < one_day:  
-                service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.team_a)
+            service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.team_a)
             bet_by_user.team_a = sp.tez(0)
 
         sp.if params.choice == 1:
@@ -116,8 +115,7 @@ class SoccerBetFactory(sp.Contract):
             game.bet_amount_on.team_b -= bet_by_user.team_b
             amount_to_send.value = bet_by_user.team_b
             self.data.games[params.game_id].bets_by_choice.team_b -= sp.int(1)
-            sp.if time_diff < one_day:  
-                service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.team_b)
+            service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.team_b)
             bet_by_user.team_b = sp.tez(0)
 
         sp.if params.choice == 2:
@@ -125,8 +123,7 @@ class SoccerBetFactory(sp.Contract):
             game.bet_amount_on.tie -= bet_by_user.tie
             amount_to_send.value = bet_by_user.tie
             self.data.games[params.game_id].bets_by_choice.tie -= sp.int(1)
-            sp.if time_diff < one_day:  
-                service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.tie)
+            service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.tie)
             bet_by_user.tie = sp.tez(0)
 
         sp.if time_diff < one_day:  
@@ -161,11 +158,8 @@ class SoccerBetFactory(sp.Contract):
         # If a game is postponed or delayed, each player gets his money back
         sp.if game.outcome == sp.int(10):
             amount_to_send.value = bet_by_user.team_a + bet_by_user.team_b + bet_by_user.tie
-            jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie),sp.utils.mutez_to_nat(game.bet_amount_on.team_a + game.bet_amount_on.team_b +game.bet_amount_on.tie))
+            jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie),sp.utils.mutez_to_nat(game.total_bet_amount))
 
-            game.bet_amount_on.team_a -= bet_by_user.team_a
-            game.bet_amount_on.team_b -= bet_by_user.team_b
-            game.bet_amount_on.tie -= bet_by_user.tie
             bet_by_user.team_a = sp.tez(0)
             bet_by_user.team_b = sp.tez(0)
             bet_by_user.tie = sp.tez(0)
