@@ -1,6 +1,5 @@
 import smartpy as sp
 
-
 class SoccerBetFactory(sp.Contract):
     def __init__(self, admin):
         self.init(
@@ -12,9 +11,8 @@ class SoccerBetFactory(sp.Contract):
 
     @sp.entry_point
     def new_game(self, params):
-        sp.verify_equal(sp.sender, self.data.admin,
-                        message="Error: you cannot initialize a new game")
-        sp.verify(~ self.data.games.contains(params.game_id))
+        sp.verify_equal(sp.sender, self.data.admin,message="Error: you cannot initialize a new game")
+        sp.verify(~ self.data.games.contains(params.game_id),message="Error: this game id already exists")
 
         self.data.games[params.game_id] = sp.record(
             team_a=params.team_a,
@@ -150,34 +148,56 @@ class SoccerBetFactory(sp.Contract):
         sp.verify(game.bet_amount_by_user.contains(sp.sender),message="Error: you did not place a bet on this match")
         sp.verify(game.outcome != -1, message = "Error, you cannot redeem your winnings yet")
         bet_by_user = game.bet_amount_by_user[sp.sender]
+        total_bet_by_user=bet_by_user.team_a + bet_by_user.team_b + bet_by_user.tie
         sp.verify((game.outcome == sp.int(10)) | ((game.outcome == sp.int(0)) & (bet_by_user.team_a > sp.tez(0))) | ((game.outcome == sp.int(1)) & (bet_by_user.team_b > sp.tez(0))) | ((game.outcome == sp.int(2)) & (bet_by_user.tie > sp.tez(0))), message="Error: you have lost your bet! :(")
 
         amount_to_send = sp.local("amount_to_send", sp.tez(0))
         jackpot_share = sp.local("jackpot_share", sp.tez(0))
+        repayment_allowed=sp.bool(False)
 
         # If a game is postponed or delayed, each player gets his money back
         sp.if game.outcome == sp.int(10):
             amount_to_send.value = bet_by_user.team_a + bet_by_user.team_b + bet_by_user.tie
             jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie),sp.utils.mutez_to_nat(game.total_bet_amount))
-
             bet_by_user.team_a = sp.tez(0)
             bet_by_user.team_b = sp.tez(0)
             bet_by_user.tie = sp.tez(0)
 
         sp.if game.outcome == sp.int(0):
-            amount_to_send.value = sp.split_tokens(bet_by_user.team_a, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_a))
-            jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_a),sp.utils.mutez_to_nat(game.bet_amount_on.team_a))
-            bet_by_user.team_a = sp.tez(0)
+            sp.if game.bet_amount_on.team_a>sp.tez(0):
+                amount_to_send.value = sp.split_tokens(bet_by_user.team_a, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_a))
+                jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_a),sp.utils.mutez_to_nat(game.bet_amount_on.team_a))
+                bet_by_user.team_a = sp.tez(0)            
+            sp.else:
+                amount_to_send.value=total_bet_by_user
+                jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(total_bet_by_user),sp.utils.mutez_to_nat(game.total_bet_amount))
+                bet_by_user.team_b=sp.tez(0)  
+                bet_by_user.tie=sp.tez(0)
+                repayment_allowed=True
 
         sp.if game.outcome == sp.int(1):
-            amount_to_send.value = sp.split_tokens(bet_by_user.team_b, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_b))
-            jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_b),sp.utils.mutez_to_nat(game.bet_amount_on.team_b))
-            bet_by_user.team_b = sp.tez(0)
-            
+            sp.if game.bet_amount_on.team_b>sp.tez(0):
+                amount_to_send.value = sp.split_tokens(bet_by_user.team_b, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.team_b))
+                jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.team_b),sp.utils.mutez_to_nat(game.bet_amount_on.team_b))
+                bet_by_user.team_b = sp.tez(0)
+            sp.else:
+                amount_to_send.value=total_bet_by_user
+                jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(total_bet_by_user),sp.utils.mutez_to_nat(game.total_bet_amount))
+                bet_by_user.team_a=sp.tez(0)  
+                bet_by_user.tie=sp.tez(0)
+                repayment_allowed=True
+
         sp.if game.outcome == sp.int(2):
-            amount_to_send.value = sp.split_tokens(bet_by_user.tie, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.tie))
-            jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.tie),sp.utils.mutez_to_nat(game.bet_amount_on.tie))
-            bet_by_user.tie = sp.tez(0)
+            sp.if game.bet_amount_on.tie>sp.tez(0):
+                amount_to_send.value = sp.split_tokens(bet_by_user.tie, sp.utils.mutez_to_nat(game.total_bet_amount), sp.utils.mutez_to_nat(game.bet_amount_on.tie))
+                jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(bet_by_user.tie),sp.utils.mutez_to_nat(game.bet_amount_on.tie))
+                bet_by_user.tie = sp.tez(0)
+            sp.else:
+                amount_to_send.value=total_bet_by_user
+                jackpot_share.value+=sp.split_tokens(game.jackpot,sp.utils.mutez_to_nat(total_bet_by_user),sp.utils.mutez_to_nat(game.total_bet_amount))
+                bet_by_user.team_a=sp.tez(0)  
+                bet_by_user.team_b=sp.tez(0)
+                repayment_allowed=True
         
         game.jackpot-=jackpot_share.value
         sp.send(sp.sender, amount_to_send.value+jackpot_share.value)
@@ -186,14 +206,18 @@ class SoccerBetFactory(sp.Contract):
         sp.if (bet_by_user.team_a == sp.mutez(0)) & (bet_by_user.team_b == sp.tez(0)) & (bet_by_user.tie == sp.tez(0)):
             del game.bet_amount_by_user[sp.sender]
 
-        sp.if (game.outcome == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
-            del self.data.games[game_id]
-        sp.else:
-            sp.if (game.outcome == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
+        sp.if repayment_allowed==False:
+            sp.if (game.outcome == sp.int(0)) & (game.redeemed == game.bets_by_choice.team_a):
                 del self.data.games[game_id]
             sp.else:
-                sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
+                sp.if (game.outcome == sp.int(1)) & (game.redeemed == game.bets_by_choice.team_b):
                     del self.data.games[game_id]
+                sp.else:
+                    sp.if (game.outcome == sp.int(2)) & (game.redeemed == game.bets_by_choice.tie):
+                        del self.data.games[game_id]
+        sp.else:
+            sp.if sp.len(game.bet_amount_by_user)==0:
+                del self.data.games[game_id]
 
     # Below entry points mimick the future oracle behaviour and are not meant to stay
     @sp.entry_point
@@ -287,6 +311,14 @@ def test():
         match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 40)
     )).run(sender=admin)
 
+    game8 = 8
+    scenario += factory.new_game(sp.record(
+        game_id=game8,
+        team_a="Allemagne",
+        team_b="Pologne",
+        match_timestamp = sp.timestamp_from_utc(2022, 1, 1, 1, 1, 3)
+    )).run(sender=admin)
+
     scenario.h1("Testing bet placing")
 
     # Betting on game 1 
@@ -378,6 +410,14 @@ def test():
 
     # Testing cancelled/postponed outcome
     scenario += factory.set_outcome(sp.record(game_id = game5, choice = 10)).run(sender=admin.address, now = sp.timestamp(1640998862))
+
+    scenario.h1("Testing losers can recover their bet amount when there is no bet on the actual outcome")
+
+    # scenario += factory.bet_on_team_a(game8).run(sender=enguerrand.address, amount=sp.tez(2500), now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1))
+
+    # scenario += factory.set_outcome(sp.record(game_id = game8, choice = 1)).run(sender=admin.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 3))
+
+    # scenario += factory.redeem_tez(game8).run(sender=enguerrand.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 4))
 
     scenario.h1("Testing contract's remainder increase when no-bet games are deleted")
 
