@@ -1,5 +1,6 @@
 import smartpy as sp
 
+
 class SoccerBetFactory(sp.Contract):
     def __init__(self, admin):
         self.init(
@@ -83,6 +84,10 @@ class SoccerBetFactory(sp.Contract):
     def unbet_on_tie(self, game_id):
         self.remove_bet(sp.record(game_id=game_id, choice=sp.int(2)))
 
+    @sp.entry_point
+    def unbet_all(self, game_id):
+        self.remove_bet(sp.record(game_id=game_id, choice=sp.int(-1)))
+
     @sp.private_lambda(with_storage="read-write", with_operations=True, wrap_call=True)
     def remove_bet(self, params):
         sp.verify(self.data.games.contains(params.game_id),message="Error: this match does not exist")
@@ -124,6 +129,22 @@ class SoccerBetFactory(sp.Contract):
             service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.tie)
             bet_by_user.tie = sp.tez(0)
 
+        sp.if params.choice == -1:
+            game.bet_amount_on.team_a -= bet_by_user.team_a
+            game.bet_amount_on.team_b -= bet_by_user.team_b
+            game.bet_amount_on.tie -= bet_by_user.tie
+            amount_to_send.value = bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie
+            sp.if bet_by_user.team_a>sp.tez(0):
+                self.data.games[params.game_id].bets_by_choice.team_a -= sp.int(1)            
+            sp.if bet_by_user.team_b>sp.tez(0):
+                self.data.games[params.game_id].bets_by_choice.team_b -= sp.int(1)
+            sp.if bet_by_user.tie>sp.tez(0):
+                self.data.games[params.game_id].bets_by_choice.tie -= sp.int(1)
+
+            service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie)
+            bet_by_user.team_a = sp.tez(0)
+            bet_by_user.team_b = sp.tez(0)
+            bet_by_user.tie = sp.tez(0)
 
         sp.if time_diff < one_day:  
             service_fee.value = sp.split_tokens(service_fee.value, 1, 100000000000000)
@@ -419,6 +440,16 @@ def test():
     # scenario += factory.set_outcome(sp.record(game_id = game8, choice = 1)).run(sender=admin.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 3))
 
     # scenario += factory.redeem_tez(game8).run(sender=enguerrand.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 4))
+
+    scenario.h1("Testing players can remove all their bets at once")
+
+    scenario += factory.bet_on_team_a(game8).run(sender=enguerrand.address, amount=sp.tez(2500), now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1))
+
+    scenario += factory.bet_on_team_b(game8).run(sender=enguerrand.address, amount=sp.tez(2500), now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1))
+
+    scenario += factory.bet_on_tie(game8).run(sender=enguerrand.address, amount=sp.tez(2500), now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 1))
+
+    scenario += factory.unbet_all(game8).run(sender=enguerrand.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 2))
 
 
     scenario.h1("Testing contract's remainder increase when no-bet games are deleted")
