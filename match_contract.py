@@ -124,6 +124,7 @@ class SoccerBetFactory(sp.Contract):
             service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.tie)
             bet_by_user.tie = sp.tez(0)
 
+
         sp.if time_diff < one_day:  
             service_fee.value = sp.split_tokens(service_fee.value, 1, 100000000000000)
             game.jackpot+=service_fee.value
@@ -418,6 +419,7 @@ def test():
     # scenario += factory.set_outcome(sp.record(game_id = game8, choice = 1)).run(sender=admin.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 3))
 
     # scenario += factory.redeem_tez(game8).run(sender=enguerrand.address, now=sp.timestamp_from_utc(2022, 1, 1, 1, 1, 4))
+
 
     scenario.h1("Testing contract's remainder increase when no-bet games are deleted")
 
