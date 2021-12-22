@@ -100,10 +100,12 @@ class SoccerBetFactory(sp.Contract):
         one_day = sp.int(86000)
         service_fee = sp.local("service_fee", sp.tez(0))
         fee_multiplier = sp.local("fee_multiplier", sp.nat(0))
+        time_diff = sp.local("time_diff", sp.int(0))
 
-        time_diff = self.data.games[params.game_id].match_timestamp - bet_by_user.timestamp
-        sp.if time_diff < one_day:  
-            fee_multiplier.value = sp.as_nat(20000000000000-sp.mul(23148148,time_diff))
+        time_diff.value = self.data.games[params.game_id].match_timestamp - bet_by_user.timestamp
+        sp.if time_diff.value < one_day:  
+            time_diff.value = sp.fst(sp.ediv(time_diff.value,3600).open_some())
+            fee_multiplier.value = sp.as_nat(2000-sp.mul(83,time_diff.value))
             
         sp.if params.choice == 0:
             sp.verify(bet_by_user.team_a > sp.tez(0), message="Error: you have not placed any bets on this outcome")
@@ -130,15 +132,17 @@ class SoccerBetFactory(sp.Contract):
             bet_by_user.tie = sp.tez(0)
 
         sp.if params.choice == -1:
-            game.bet_amount_on.team_a -= bet_by_user.team_a
-            game.bet_amount_on.team_b -= bet_by_user.team_b
-            game.bet_amount_on.tie -= bet_by_user.tie
-            amount_to_send.value = bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie
             sp.if bet_by_user.team_a>sp.tez(0):
+                game.bet_amount_on.team_a -= bet_by_user.team_a
+                amount_to_send.value = bet_by_user.team_a
                 self.data.games[params.game_id].bets_by_choice.team_a -= sp.int(1)            
             sp.if bet_by_user.team_b>sp.tez(0):
+                game.bet_amount_on.team_b -= bet_by_user.team_b
+                amount_to_send.value += bet_by_user.team_b
                 self.data.games[params.game_id].bets_by_choice.team_b -= sp.int(1)
             sp.if bet_by_user.tie>sp.tez(0):
+                game.bet_amount_on.tie -= bet_by_user.tie
+                amount_to_send.value += bet_by_user.tie
                 self.data.games[params.game_id].bets_by_choice.tie -= sp.int(1)
 
             service_fee.value = sp.mul(fee_multiplier.value, bet_by_user.team_a+bet_by_user.team_b+bet_by_user.tie)
@@ -146,8 +150,8 @@ class SoccerBetFactory(sp.Contract):
             bet_by_user.team_b = sp.tez(0)
             bet_by_user.tie = sp.tez(0)
 
-        sp.if time_diff < one_day:  
-            service_fee.value = sp.split_tokens(service_fee.value, 1, 100000000000000)
+        sp.if time_diff.value < one_day:  
+            service_fee.value = sp.split_tokens(service_fee.value, 1, 10000)
             game.jackpot+=service_fee.value
 
         sp.send(sp.sender, amount_to_send.value - service_fee.value)
